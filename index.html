@@ -4,179 +4,396 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<title>CYBERSHIFT</title>
+<meta name="theme-color" content="#030308">
+<title>CYBERSHIFT: NEON DRIFT / ORBIT SURVIVOR</title>
 <style>
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  html, body { width: 100%; height: 100%; overflow: hidden; background: #080812; touch-action: none; position: fixed; }
+  * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; -webkit-user-select: none; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #030308; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; position: fixed; }
   canvas { display: block; width: 100vw; height: 100vh; }
+
+  #hud { position: absolute; top: 12px; left: 12px; right: 12px; display: flex; justify-content: space-between; align-items: center; pointer-events: none; z-index: 10; }
+  .hud-pill { background: rgba(10, 10, 24, 0.75); border: 1px solid rgba(0, 255, 204, 0.3); padding: 8px 14px; border-radius: 20px; color: #fff; font-size: 14px; font-weight: 700; letter-spacing: 1px; backdrop-filter: blur(6px); display: flex; gap: 8px; }
+  #score-val { color: #00ffcc; text-shadow: 0 0 10px #00ffcc; }
+  #mult-val { color: #ff0077; }
+  #shield-val { color: #00e5ff; }
+
+  #menu-overlay { position: absolute; inset: 0; background: radial-gradient(circle at center, rgba(10,10,30,0.85) 0%, rgba(3,3,8,0.96) 100%); display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 50; text-align: center; padding: 20px; }
+  h1 { font-size: 2.2rem; font-weight: 900; letter-spacing: 5px; color: #00ffcc; text-shadow: 0 0 25px rgba(0,255,204,0.8); margin-bottom: 6px; }
+  h2 { font-size: 0.95rem; font-weight: 600; letter-spacing: 3px; color: #ff0077; text-shadow: 0 0 15px rgba(255,0,119,0.7); margin-bottom: 24px; }
+  p.tip { color: #aaa; font-size: 0.9rem; line-height: 1.6; margin-bottom: 28px; max-width: 320px; }
+  
+  .btn-start { background: linear-gradient(135deg, #00ffcc, #0088ff); border: none; padding: 16px 48px; border-radius: 35px; color: #050510; font-size: 1.15rem; font-weight: 900; letter-spacing: 2px; cursor: pointer; box-shadow: 0 0 30px rgba(0,255,204,0.6); outline: none; }
+  .btn-start:active { transform: scale(0.96); }
+  
+  #high-score-board { margin-top: 20px; color: #ffcc00; font-size: 0.9rem; font-weight: 700; letter-spacing: 1px; }
 </style>
 </head>
 <body>
-<canvas id="c"></canvas>
+
+<div id="hud">
+  <div class="hud-pill">SCORE: <span id="score-val">0</span><span id="mult-val">x1</span></div>
+  <div class="hud-pill"><span id="shield-val">SHIELD: 100%</span></div>
+</div>
+
+<div id="menu-overlay">
+  <h1>CYBERSHIFT</h1>
+  <h2>NEON DRIFT / ORBIT SURVIVOR</h2>
+  <p class="tip">TAP & HOLD to tether to neon anchors.<br>ORBIT to build speed, RELEASE to slingshot!<br>Dodge red sentinels and collect shards.</p>
+  <button class="btn-start" id="btn-play">START RUN</button>
+  <div id="high-score-board">BEST: 0</div>
+</div>
+
+<canvas id="stage"></canvas>
+
 <script>
-// Unregister all old service workers immediately
-if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.getRegistrations().then(regs => {
-    regs.forEach(r => r.unregister());
-  });
-}
-
-const canvas = document.getElementById('c');
+const canvas = document.getElementById('stage');
 const ctx = canvas.getContext('2d');
+const scoreEl = document.getElementById('score-val');
+const multEl = document.getElementById('mult-val');
+const shieldEl = document.getElementById('shield-val');
+const overlay = document.getElementById('menu-overlay');
+const btnPlay = document.getElementById('btn-play');
+const bestEl = document.getElementById('high-score-board');
 
-let W = canvas.width = window.innerWidth;
-let H = canvas.height = window.innerHeight;
-window.addEventListener('resize', () => {
+let W, H;
+function setDimensions() {
   W = canvas.width = window.innerWidth;
   H = canvas.height = window.innerHeight;
-});
+}
+window.addEventListener('resize', setDimensions);
+setDimensions();
 
-let state = 'menu'; // 'menu', 'playing', 'over'
+// --- RETRO SYNTH AUDIO ENGINE ---
+let audioCtx = null;
+function initAudio() {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+}
+
+function playSound(type) {
+  if (!audioCtx) return;
+  const now = audioCtx.currentTime;
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.connect(gain);
+  gain.connect(audioCtx.destination);
+
+  if (type === 'tether') {
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(260, now);
+    osc.frequency.exponentialRampToValueAtTime(520, now + 0.12);
+    gain.gain.setValueAtTime(0.12, now);
+    gain.gain.linearRampToValueAtTime(0.001, now + 0.12);
+    osc.start(now); osc.stop(now + 0.12);
+  } else if (type === 'shard') {
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(700, now);
+    osc.frequency.exponentialRampToValueAtTime(1400, now + 0.15);
+    gain.gain.setValueAtTime(0.2, now);
+    gain.gain.linearRampToValueAtTime(0.001, now + 0.15);
+    osc.start(now); osc.stop(now + 0.15);
+  } else if (type === 'hit') {
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(120, now);
+    osc.frequency.exponentialRampToValueAtTime(30, now + 0.25);
+    gain.gain.setValueAtTime(0.28, now);
+    gain.gain.linearRampToValueAtTime(0.001, now + 0.25);
+    osc.start(now); osc.stop(now + 0.25);
+  } else if (type === 'sling') {
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(380, now);
+    osc.frequency.exponentialRampToValueAtTime(760, now + 0.18);
+    gain.gain.setValueAtTime(0.16, now);
+    gain.gain.linearRampToValueAtTime(0.001, now + 0.18);
+    osc.start(now); osc.stop(now + 0.18);
+  }
+}
+
+// --- GAME LOGIC ---
+let state = 'menu';
 let score = 0;
 let multiplier = 1;
-let hp = 3;
-let best = parseInt(localStorage.getItem('cs_best') || '0');
+let shield = 100;
+let bestScore = parseInt(localStorage.getItem('cybershift_best') || '0');
+bestEl.innerText = 'BEST: ' + bestScore;
 
-let ship = { x: W / 2, y: H * 0.75, vx: 0, vy: -5, r: 12, tether: null, angle: 0, dist: 0, dir: 1, spd: 0 };
-let anchors = [];
-let shards = [];
 let camY = 0;
+let shake = 0;
+let ignoreTouchUntil = 0;
 
-function spawn(startY) {
+let player = {
+  x: W / 2, y: H * 0.75,
+  vx: 0, vy: -6,
+  r: 10,
+  tether: null,
+  angle: 0,
+  dist: 0,
+  dir: 1,
+  angVel: 0
+};
+
+let anchors = [];
+let sentinels = [];
+let shards = [];
+let particles = [];
+let floatingTexts = [];
+
+function spawnChunk(startY) {
   for (let y = startY; y > startY - 1200; y -= 170) {
-    anchors.push({ x: 60 + Math.random() * (W - 120), y: y, r: 22, p: Math.random() * 6 });
-    if (Math.random() > 0.3) {
-      shards.push({ x: 40 + Math.random() * (W - 80), y: y + (Math.random() - 0.5) * 80, r: 8, rot: 0 });
+    // Neon Anchors
+    anchors.push({
+      x: 60 + Math.random() * (W - 120),
+      y: y,
+      r: 20,
+      pulse: Math.random() * 6
+    });
+
+    // Shards
+    if (Math.random() > 0.25) {
+      shards.push({
+        x: 40 + Math.random() * (W - 80),
+        y: y + (Math.random() - 0.5) * 80,
+        r: 8,
+        rot: 0
+      });
+    }
+
+    // Red Sentinel Mines
+    if (Math.random() > 0.55 && y < H * 0.4) {
+      sentinels.push({
+        x: 50 + Math.random() * (W - 100),
+        y: y - 80,
+        r: 14,
+        pulse: Math.random() * 6,
+        vx: (Math.random() - 0.5) * 1.5
+      });
     }
   }
 }
 
-function start() {
+function startGame() {
+  initAudio();
   score = 0;
   multiplier = 1;
-  hp = 3;
+  shield = 100;
   camY = 0;
   anchors = [];
+  sentinels = [];
   shards = [];
-  ship.x = W / 2;
-  ship.y = H * 0.72;
-  ship.vx = 0;
-  ship.vy = -6;
-  ship.tether = null;
+  particles = [];
+  floatingTexts = [];
 
-  anchors.push({ x: W * 0.35, y: H * 0.5, r: 22, p: 0 });
-  anchors.push({ x: W * 0.65, y: H * 0.3, r: 22, p: 1.5 });
-  spawn(H * 0.15);
+  scoreEl.innerText = '0';
+  multEl.innerText = 'x1';
+  shieldEl.innerText = 'SHIELD: 100%';
 
+  player.x = W / 2;
+  player.y = H * 0.72;
+  player.vx = 0;
+  player.vy = -6;
+  player.tether = null;
+
+  anchors.push({ x: W * 0.35, y: H * 0.52, r: 20, pulse: 0 });
+  anchors.push({ x: W * 0.65, y: H * 0.32, r: 20, pulse: 1.5 });
+  spawnChunk(H * 0.15);
+
+  overlay.style.display = 'none';
   state = 'playing';
+  ignoreTouchUntil = Date.now() + 300;
 }
 
-function handleDown(e) {
-  if (state === 'menu' || state === 'over') {
-    start();
-    return;
-  }
-  if (ship.tether) return;
+function addPopText(x, y, txt, col = '#00ffcc') {
+  floatingTexts.push({ x, y, txt, col, alpha: 1, vy: -1.2 });
+}
 
-  let closest = null, minD = 300;
+function addParticles(x, y, col, num = 14) {
+  for (let i = 0; i < num; i++) {
+    let ang = Math.random() * Math.PI * 2;
+    let spd = 1.5 + Math.random() * 5;
+    particles.push({
+      x, y,
+      vx: Math.cos(ang) * spd,
+      vy: Math.sin(ang) * spd,
+      col,
+      alpha: 1,
+      decay: 0.02 + Math.random() * 0.025
+    });
+  }
+}
+
+// --- TOUCH / POINTER HANDLERS ---
+function onTouchStart(e) {
+  if (state !== 'playing' || Date.now() < ignoreTouchUntil) return;
+  if (player.tether) return;
+
+  let closest = null;
+  let minD = 280;
   for (let a of anchors) {
-    let d = Math.hypot(ship.x - a.x, ship.y - a.y);
-    if (d < minD) { minD = d; closest = a; }
+    let d = Math.hypot(player.x - a.x, player.y - a.y);
+    if (d < minD) {
+      minD = d;
+      closest = a;
+    }
   }
 
   if (closest) {
-    ship.tether = closest;
-    ship.dist = Math.max(minD, 45);
-    ship.angle = Math.atan2(ship.y - closest.y, ship.x - closest.x);
-    let spd = Math.hypot(ship.vx, ship.vy);
-    if (spd < 7) spd = 7;
-    let dot = ship.vx * (-Math.sin(ship.angle)) + ship.vy * (Math.cos(ship.angle));
-    ship.dir = dot >= 0 ? 1 : -1;
-    ship.spd = (spd / ship.dist) * ship.dir;
+    player.tether = closest;
+    player.dist = Math.max(minD, 45);
+    player.angle = Math.atan2(player.y - closest.y, player.x - closest.x);
+    let curSpd = Math.hypot(player.vx, player.vy);
+    if (curSpd < 6) curSpd = 6;
+    let tangentX = -Math.sin(player.angle);
+    let tangentY = Math.cos(player.angle);
+    let dot = player.vx * tangentX + player.vy * tangentY;
+    player.dir = dot >= 0 ? 1 : -1;
+    player.angVel = (curSpd / player.dist) * player.dir;
+    playSound('tether');
   }
 }
 
-function handleUp() {
-  if (state !== 'playing' || !ship.tether) return;
-  let spd = Math.min(Math.max(Math.abs(ship.spd * ship.dist) * 1.15, 8), 18);
-  let relAngle = ship.angle + (ship.dir > 0 ? Math.PI / 2 : -Math.PI / 2);
-  ship.vx = Math.cos(relAngle) * spd;
-  ship.vy = Math.sin(relAngle) * spd;
-  ship.tether = null;
+function onTouchEnd(e) {
+  if (state !== 'playing') return;
+  if (player.tether) {
+    let spd = Math.abs(player.angVel * player.dist) * 1.15;
+    spd = Math.min(Math.max(spd, 7.5), 18);
+    let relAng = player.angle + (player.dir > 0 ? Math.PI / 2 : -Math.PI / 2);
+    player.vx = Math.cos(relAng) * spd;
+    player.vy = Math.sin(relAng) * spd;
+    player.tether = null;
+    playSound('sling');
+    shake = 4;
+  }
 }
 
-window.addEventListener('pointerdown', handleDown);
-window.addEventListener('pointerup', handleUp);
+canvas.addEventListener('pointerdown', onTouchStart);
+canvas.addEventListener('pointerup', onTouchEnd);
 
-function loop() {
-  requestAnimationFrame(loop);
+btnPlay.addEventListener('click', (e) => { e.stopPropagation(); startGame(); });
+btnPlay.addEventListener('pointerdown', (e) => { e.stopPropagation(); startGame(); });
+
+// --- MAIN LOOP ---
+function render() {
+  requestAnimationFrame(render);
 
   if (state === 'playing') {
-    if (ship.tether) {
-      ship.angle += ship.spd;
-      ship.x = ship.tether.x + Math.cos(ship.angle) * ship.dist;
-      ship.y = ship.tether.y + Math.sin(ship.angle) * ship.dist;
+    if (player.tether) {
+      player.angle += player.angVel;
+      player.x = player.tether.x + Math.cos(player.angle) * player.dist;
+      player.y = player.tether.y + Math.sin(player.angle) * player.dist;
+      player.angVel *= 1.002;
     } else {
-      ship.x += ship.vx;
-      ship.y += ship.vy;
-      ship.vy += 0.08;
+      player.x += player.vx;
+      player.y += player.vy;
+      player.vy += 0.08; // gravity
     }
 
-    if (ship.x < ship.r) { ship.x = ship.r; ship.vx = Math.abs(ship.vx) * 0.7; }
-    if (ship.x > W - ship.r) { ship.x = W - ship.r; ship.vx = -Math.abs(ship.vx) * 0.7; }
+    // Horizontal bounce
+    if (player.x < player.r) { player.x = player.r; player.vx = Math.abs(player.vx) * 0.7; }
+    if (player.x > W - player.r) { player.x = W - player.r; player.vx = -Math.abs(player.vx) * 0.7; }
 
-    let targetY = ship.y - H * 0.65;
-    if (targetY < camY) {
-      score += Math.floor((camY - targetY) * 0.2);
-      camY = targetY;
+    // Camera follow (moves up)
+    let targetCamY = player.y - H * 0.65;
+    if (targetCamY < camY) {
+      score += Math.floor((camY - targetCamY) * 0.25);
+      scoreEl.innerText = score;
+      camY = targetCamY;
     }
 
-    let topA = anchors.reduce((m, a) => a.y < m ? a.y : m, H);
-    if (topA > camY - 450) spawn(topA - 120);
+    // World generation
+    let topAnchor = anchors.reduce((min, a) => a.y < min ? a.y : min, H);
+    if (topAnchor > camY - 500) {
+      spawnChunk(topAnchor - 120);
+    }
 
+    // Shards
     for (let i = shards.length - 1; i >= 0; i--) {
       let s = shards[i];
-      s.rot += 0.04;
-      if (Math.hypot(ship.x - s.x, ship.y - s.y) < ship.r + s.r + 14) {
-        score += 150 * multiplier;
+      s.rot += 0.05;
+      if (Math.hypot(player.x - s.x, player.y - s.y) < player.r + s.r + 12) {
+        addParticles(s.x, s.y, '#00ffcc', 14);
+        playSound('shard');
+        let pts = 100 * multiplier;
+        score += pts;
         multiplier = Math.min(8, multiplier + 1);
+        scoreEl.innerText = score;
+        multEl.innerText = 'x' + multiplier;
+        addPopText(s.x, s.y, `+${pts}`);
         shards.splice(i, 1);
       }
     }
 
-    if (ship.y - camY > H + 50) {
-      hp--;
-      if (hp <= 0) {
-        state = 'over';
-        if (score > best) { best = score; localStorage.setItem('cs_best', best); }
-      } else {
-        ship.y = camY + H * 0.5;
-        ship.vy = -7;
-        ship.vx = 0;
-        ship.tether = null;
+    // Sentinel hazards
+    for (let s of sentinels) {
+      s.x += s.vx;
+      if (s.x < 30 || s.x > W - 30) s.vx *= -1;
+      if (Math.hypot(player.x - s.x, player.y - s.y) < player.r + s.r + 4) {
+        shield -= 35;
+        multiplier = 1;
+        multEl.innerText = 'x1';
+        shake = 10;
+        addParticles(player.x, player.y, '#ff0055', 20);
+        playSound('hit');
+        shieldEl.innerText = `SHIELD: ${Math.max(0, shield)}%`;
+        if (shield <= 0) {
+          endGame();
+        } else {
+          player.vy = -6; // bounce away
+        }
       }
     }
 
+    // Screen bottom fall
+    if (player.y - camY > H + 50) {
+      endGame();
+    }
+
+    // Culling offscreen elements
     anchors = anchors.filter(a => a.y < camY + H + 180);
     shards = shards.filter(s => s.y < camY + H + 180);
+    sentinels = sentinels.filter(s => s.y < camY + H + 180);
   }
 
-  // Draw background
-  ctx.fillStyle = '#080812';
+  function endGame() {
+    state = 'over';
+    shake = 12;
+    playSound('hit');
+    if (score > bestScore) {
+      bestScore = score;
+      localStorage.setItem('cybershift_best', bestScore);
+    }
+    overlay.querySelector('h1').innerText = 'DRIFT OVER';
+    overlay.querySelector('h2').innerText = `FINAL SCORE: ${score}`;
+    btnPlay.innerText = 'RETRY RUN';
+    bestEl.innerText = 'BEST: ' + bestScore;
+    overlay.style.display = 'flex';
+  }
+
+  // --- DRAWING ---
+  ctx.save();
+  if (shake > 0) {
+    ctx.translate((Math.random() - 0.5) * shake, (Math.random() - 0.5) * shake);
+    shake *= 0.88;
+    if (shake < 0.2) shake = 0;
+  }
+
+  // Background
+  ctx.fillStyle = '#050510';
   ctx.fillRect(0, 0, W, H);
 
   ctx.save();
   ctx.translate(0, -camY);
 
-  // Rings
+  // Draw Anchors
   for (let a of anchors) {
-    a.p += 0.04;
-    let r = a.r + Math.sin(a.p) * 3;
-    ctx.strokeStyle = '#00f0ff';
-    ctx.lineWidth = 4;
+    a.pulse += 0.05;
+    let r = a.r + Math.sin(a.pulse) * 3;
+    let grad = ctx.createRadialGradient(a.x, a.y, 2, a.x, a.y, r * 1.8);
+    grad.addColorStop(0, 'rgba(0, 220, 255, 0.8)');
+    grad.addColorStop(1, 'rgba(0, 100, 255, 0)');
+    ctx.fillStyle = grad;
     ctx.beginPath();
-    ctx.arc(a.x, a.y, r, 0, Math.PI * 2);
-    ctx.stroke();
+    ctx.arc(a.x, a.y, r * 1.8, 0, Math.PI * 2);
+    ctx.fill();
 
     ctx.fillStyle = '#00f0ff';
     ctx.beginPath();
@@ -184,87 +401,99 @@ function loop() {
     ctx.fill();
   }
 
-  // Shards
+  // Draw Shards
   for (let s of shards) {
     ctx.save();
     ctx.translate(s.x, s.y);
     ctx.rotate(s.rot);
     ctx.fillStyle = '#00ffaa';
+    ctx.shadowColor = '#00ffaa';
+    ctx.shadowBlur = 10;
     ctx.fillRect(-s.r, -s.r, s.r * 2, s.r * 2);
     ctx.restore();
   }
 
-  // Tether line
-  if (ship.tether) {
-    ctx.strokeStyle = '#00ffff';
-    ctx.lineWidth = 3;
+  // Draw Sentinels
+  for (let s of sentinels) {
+    s.pulse += 0.06;
+    ctx.save();
+    ctx.translate(s.x, s.y);
+    ctx.fillStyle = '#ff0055';
+    ctx.shadowColor = '#ff0055';
+    ctx.shadowBlur = 12;
     ctx.beginPath();
-    ctx.moveTo(ship.tether.x, ship.tether.y);
-    ctx.lineTo(ship.x, ship.y);
+    ctx.arc(0, 0, s.r + Math.sin(s.pulse) * 2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  // Tether line
+  if (player.tether) {
+    ctx.strokeStyle = '#00ffff';
+    ctx.lineWidth = 2.5;
+    ctx.shadowColor = '#00ffff';
+    ctx.shadowBlur = 12;
+    ctx.beginPath();
+    ctx.moveTo(player.tether.x, player.tether.y);
+    ctx.lineTo(player.x, player.y);
     ctx.stroke();
   }
 
+  // Particles
+  for (let i = particles.length - 1; i >= 0; i--) {
+    let p = particles[i];
+    p.x += p.vx;
+    p.y += p.vy;
+    p.alpha -= p.decay;
+    if (p.alpha <= 0) {
+      particles.splice(i, 1);
+      continue;
+    }
+    ctx.fillStyle = p.col;
+    ctx.globalAlpha = p.alpha;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 3, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+
+  // Floating text
+  for (let i = floatingTexts.length - 1; i >= 0; i--) {
+    let ft = floatingTexts[i];
+    ft.y += ft.vy;
+    ft.alpha -= 0.025;
+    if (ft.alpha <= 0) {
+      floatingTexts.splice(i, 1);
+      continue;
+    }
+    ctx.fillStyle = ft.col;
+    ctx.globalAlpha = ft.alpha;
+    ctx.font = 'bold 15px sans-serif';
+    ctx.fillText(ft.txt, ft.x - 14, ft.y);
+  }
+  ctx.globalAlpha = 1;
+
   // Ship
   ctx.save();
-  ctx.translate(ship.x, ship.y);
-  let shipAngle = Math.atan2(ship.vy, ship.vx);
+  ctx.translate(player.x, player.y);
+  let shipAngle = Math.atan2(player.vy, player.vx);
   ctx.rotate(shipAngle + Math.PI / 2);
+  ctx.shadowColor = '#ff0077';
+  ctx.shadowBlur = 15;
   ctx.fillStyle = '#ff0077';
   ctx.beginPath();
-  ctx.moveTo(0, -ship.r * 1.5);
-  ctx.lineTo(ship.r, ship.r);
-  ctx.lineTo(0, ship.r * 0.6);
-  ctx.lineTo(-ship.r, ship.r);
+  ctx.moveTo(0, -player.r * 1.5);
+  ctx.lineTo(player.r, player.r);
+  ctx.lineTo(0, player.r * 0.6);
+  ctx.lineTo(-player.r, player.r);
   ctx.closePath();
   ctx.fill();
   ctx.restore();
 
   ctx.restore();
-
-  // HUD (in game)
-  if (state === 'playing') {
-    ctx.fillStyle = '#00ffcc';
-    ctx.font = 'bold 18px sans-serif';
-    ctx.fillText('SCORE: ' + score + ' (x' + multiplier + ')', 20, 40);
-    ctx.fillStyle = '#ff0077';
-    ctx.fillText('HP: ' + hp, W - 70, 40);
-  }
-
-  // Menu / Game Over Screen
-  if (state === 'menu' || state === 'over') {
-    ctx.fillStyle = 'rgba(5, 5, 12, 0.85)';
-    ctx.fillRect(0, 0, W, H);
-
-    ctx.textAlign = 'center';
-    ctx.fillStyle = '#00ffcc';
-    ctx.font = 'bold 36px sans-serif';
-    ctx.fillText(state === 'menu' ? 'CYBERSHIFT' : 'DRIFT OVER', W / 2, H * 0.38);
-
-    ctx.fillStyle = '#ffffff';
-    ctx.font = '16px sans-serif';
-    if (state === 'menu') {
-      ctx.fillText('TAP & HOLD to tether rings', W / 2, H * 0.44);
-      ctx.fillText('RELEASE to slingshot upward', W / 2, H * 0.48);
-    } else {
-      ctx.fillText('SCORE: ' + score, W / 2, H * 0.45);
-    }
-
-    // Big green start box
-    ctx.fillStyle = '#00ffcc';
-    ctx.beginPath();
-    ctx.roundRect(W / 2 - 110, H * 0.54, 220, 56, 28);
-    ctx.fill();
-
-    ctx.fillStyle = '#050510';
-    ctx.font = 'bold 20px sans-serif';
-    ctx.fillText(state === 'menu' ? 'TAP TO START' : 'PLAY AGAIN', W / 2, H * 0.54 + 35);
-
-    ctx.fillStyle = '#ffcc00';
-    ctx.font = '15px sans-serif';
-    ctx.fillText('BEST SCORE: ' + best, W / 2, H * 0.68);
-  }
+  ctx.restore();
 }
-loop();
+render();
 </script>
 </body>
 </html>
