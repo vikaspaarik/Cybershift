@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, maximum-scale=1.0">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0a0a14">
+<title>CYBERSHIFT: NEON DRIFT</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; -webkit-user-select: none; }
+  body, html { width: 100%; height: 100%; overflow: hidden; background: #0a0a14; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; touch-action: none; }
+  canvas { display: block; width: 100%; height: 100%; }
+  #hud { position: absolute; top: 16px; left: 16px; right: 16px; display: flex; justify-content: space-between; align-items: center; pointer-events: none; }
+  .hud-box { background: rgba(10, 10, 25, 0.7); border: 1px solid rgba(0, 255, 204, 0.3); padding: 8px 16px; border-radius: 20px; color: #fff; font-size: 16px; font-weight: bold; letter-spacing: 1px; backdrop-filter: blur(4px); }
+  #score { color: #00ffcc; text-shadow: 0 0 10px #00ffcc; }
+  #multiplier { color: #ff0077; margin-left: 8px; }
+  #overlay { position: absolute; inset: 0; background: rgba(5, 5, 12, 0.88); display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 10; text-align: center; padding: 24px; }
+  h1 { color: #00ffcc; font-size: 2.4rem; letter-spacing: 4px; text-shadow: 0 0 20px #00ffcc; margin-bottom: 8px; }
+  p.subtitle { color: #aaa; font-size: 0.95rem; margin-bottom: 28px; line-height: 1.5; }
+  .btn-play { background: linear-gradient(135deg, #00ffcc, #0088ff); border: none; padding: 16px 42px; border-radius: 30px; color: #050510; font-size: 1.1rem; font-weight: 800; letter-spacing: 2px; cursor: pointer; box-shadow: 0 0 25px rgba(0,255,204,0.5); transform: scale(1); transition: transform 0.15s; }
+  .btn-play:active { transform: scale(0.95); }
+  #high-score { color: #ffcc00; margin-top: 18px; font-size: 0.9rem; letter-spacing: 1px; }
+</style>
+</head>
+<body>
+<div id="hud">
+  <div class="hud-box">SCORE: <span id="score">0</span><span id="multiplier">x1</span></div>
+  <div class="hud-box" id="health-box">HP: 3</div>
+</div>
+
+<div id="overlay">
+  <h1 id="title-text">CYBERSHIFT</h1>
+  <p class="subtitle" id="sub-text">TAP & HOLD to tether to neon anchors.<br>RELEASE to slingshot & collect shards.</p>
+  <button class="btn-play" id="btn-action">ENGAGE</button>
+  <div id="high-score">BEST: 0</div>
+</div>
+
+<canvas id="game"></canvas>
+
+<script>
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const scoreEl = document.getElementById('score');
+const multEl = document.getElementById('multiplier');
+const hpEl = document.getElementById('health-box');
+const overlay = document.getElementById('overlay');
+const btnAction = document.getElementById('btn-action');
+const titleText = document.getElementById('title-text');
+const subText = document.getElementById('sub-text');
+const highScoreEl = document.getElementById('high-score');
+
+let W, H;
+function resize() {
+  W = canvas.width = window.innerWidth;
+  H = canvas.height = window.innerHeight;
+}
+window.addEventListener('resize', resize);
+resize();
+
+// --- AUDIO SYNTHESIS ---
+let audioCtx = null;
+function playSound(type) {
+  try {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    const now = audioCtx.currentTime;
+
+    if (type === 'tether') {
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(320, now);
+      osc.frequency.exponentialRampToValueAtTime(580, now + 0.12);
+      gain.gain.setValueAtTime(0.15, now);
+      gain.gain.linearRampToValueAtTime(0.01, now + 0.12);
+      osc.start(now);
+      osc.stop(now + 0.12);
+    } else if (type === 'shard') {
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(600, now);
+      osc.frequency.exponentialRampToValueAtTime(1200, now + 0.18);
+      gain.gain.setValueAtTime(0.2, now);
+      gain.gain.linearRampToValueAtTime(0.01, now + 0.18);
+      osc.start(now);
+      osc.stop(now + 0.18);
+    } else if (type === 'hit') {
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(160, now);
+      osc.frequency.exponentialRampToValueAtTime(40, now + 0.25);
+      gain.gain.setValueAtTime(0.3, now);
+      gain.gain.linearRampToValueAtTime(0.01, now + 0.25);
+      osc.start(now);
+      osc.stop(now + 0.25);
+    }
+  } catch(e){}
+}
+
+// --- GAME STATE ---
+let state = 'menu';
+let score = 0;
+let multiplier = 1;
+let hp = 3;
+let bestScore = parseInt(localStorage.getItem('cybershift_best') || '0');
+highScoreEl.innerText = 'BEST: ' + bestScore;
+
+let ship = { x: 0, y: 0, vx: 0, vy: 0, radius: 10, tethered: null, angle: 0, orbitDist: 0, dir: 1 };
+let anchors = [];
+let shards = [];
+let particles = [];
+let touching = false;
+let cameraY = 0;
+
+function spawnWorld(startY) {
+  for (let y = startY; y > startY - 1000; y -= 160) {
+    anchors.push({
+      x: 60 + Math.random() * (W - 120),
+      y: y,
+      radius: 18,
+      pulse: Math.random() * Math.PI
+    });
+    if (Math.random() > 0.3) {
+      shards.push({
+        x: 40 + Math.random() * (W - 80),
+        y: y + (Math.random() - 0.5) * 80,
+        radius: 7,
+        rot: 0
+      });
+    }
+  }
+}
+
+function resetGame() {
+  score = 0;
+  multiplier = 1;
+  hp = 3;
+  cameraY = 0;
+  anchors = [];
+  shards = [];
+  particles = [];
+  scoreEl.innerText = '0';
+  multEl.innerText = 'x1';
+  hpEl.innerText = 'HP: 3';
+
+  ship.x = W / 2;
+  ship.y = H * 0.75;
+  ship.vx = 0;
+  ship.vy = -7;
+  ship.tethered = null;
+
+  spawnWorld(H * 0.5);
+  state = 'playing';
+  overlay.style.display = 'none';
+}
+
+function addParticles(x, y, color, count = 12) {
+  for (let i = 0; i < count; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = 1 + Math.random() * 5;
+    particles.push({
+      x, y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      life: 1,
+      decay: 0.02 + Math.random() * 0.03,
+      color
+    });
+  }
+}
+
+// --- TOUCH / INPUT ---
+function startTether() {
+  if (state !== 'playing') return;
+  touching = true;
+  let closest = null;
+  let minDist = 220;
+  for (let a of anchors) {
+    let d = Math.hypot(ship.x - a.x, ship.y - a.y);
+    if (d < minDist) {
+      minDist = d;
+      closest = a;
+    }
+  }
+  if (closest) {
+    ship.tethered = closest;
+    ship.orbitDist = minDist;
+    ship.angle = Math.atan2(ship.y - closest.y, ship.x - closest.x);
+    let curSpeed = Math.hypot(ship.vx, ship.vy) || 7;
+    let tangentX = -Math.sin(ship.angle);
+    let tangentY = Math.cos(ship.angle);
+    let dot = ship.vx * tangentX + ship.vy * tangentY;
+    ship.dir = dot >= 0 ? 1 : -1;
+    ship.angularSpeed = (curSpeed / ship.orbitDist) * ship.dir;
+    playSound('tether');
+  }
+}
+
+function releaseTether() {
+  if (state !== 'playing') return;
+  touching = false;
+  if (ship.tethered) {
+    let speed = Math.abs(ship.angularSpeed * ship.orbitDist) * 1.08;
+    speed = Math.min(speed, 14);
+    let releaseAngle = ship.angle + (ship.dir > 0 ? Math.PI / 2 : -Math.PI / 2);
+    ship.vx = Math.cos(releaseAngle) * speed;
+    ship.vy = Math.sin(releaseAngle) * speed;
+    ship.tethered = null;
+  }
+}
+
+window.addEventListener('touchstart', (e) => { e.preventDefault(); startTether(); }, { passive: false });
+window.addEventListener('touchend', (e) => { e.preventDefault(); releaseTether(); }, { passive: false });
+window.addEventListener('mousedown', startTether);
+window.addEventListener('mouseup', releaseTether);
+
+btnAction.addEventListener('click', () => {
+  playSound('shard');
+  resetGame();
+});
+
+// --- MAIN LOOP ---
+let lastTime = performance.now();
+function update() {
+  requestAnimationFrame(update);
+  let now = performance.now();
+  let dt = (now - lastTime) / 1000;
+  lastTime = now;
+
+  if (state === 'playing') {
+    if (ship.tethered) {
+      ship.angle += ship.angularSpeed;
+      ship.x = ship.tethered.x + Math.cos(ship.angle) * ship.orbitDist;
+      ship.y = ship.tethered.y + Math.sin(ship.angle) * ship.orbitDist;
+      ship.angularSpeed *= 1.002;
+    } else {
+      ship.x += ship.vx;
+      ship.y += ship.vy;
+      ship.vy += 0.08; // subtle gravity pull
+    }
+
+    // Screen bounds bounce
+    if (ship.x < ship.radius) { ship.x = ship.radius; ship.vx = -ship.vx * 0.6; }
+    if (ship.x > W - ship.radius) { ship.x = W - ship.radius; ship.vx = -ship.vx * 0.6; }
+
+    // Camera follow (moves upward)
+    let targetCamY = ship.y - H * 0.65;
+    if (targetCamY < cameraY) {
+      let earned = Math.floor((cameraY - targetCamY) * 0.2);
+      score += earned;
+      scoreEl.innerText = score;
+      cameraY = targetCamY;
+    }
+
+    // Spawn more ahead
+    let topAnchor = anchors.reduce((min, a) => a.y < min ? a.y : min, H);
+    if (topAnchor > cameraY - 400) {
+      spawnWorld(topAnchor - 100);
+    }
+
+    // Shard collection
+    for (let i = shards.length - 1; i >= 0; i--) {
+      let s = shards[i];
+      s.rot += 0.04;
+      if (Math.hypot(ship.x - s.x, ship.y - s.y) < ship.radius + s.radius + 8) {
+        addParticles(s.x, s.y, '#00ffcc', 14);
+        playSound('shard');
+        score += 150 * multiplier;
+        multiplier = Math.min(8, multiplier + 1);
+        scoreEl.innerText = score;
+        multEl.innerText = 'x' + multiplier;
+        shards.splice(i, 1);
+      }
+    }
+
+    // Fall death check
+    if (ship.y - cameraY > H + 50) {
+      hp--;
+      hpEl.innerText = 'HP: ' + hp;
+      playSound('hit');
+      if (hp <= 0) {
+        state = 'over';
+        if (score > bestScore) {
+          bestScore = score;
+          localStorage.setItem('cybershift_best', bestScore);
+        }
+        titleText.innerText = 'DRIFT OVER';
+        subText.innerHTML = `FINAL SCORE: <strong style="color:#00ffcc">${score}</strong><br>Keep momentum and ride the slingshots!`;
+        highScoreEl.innerText = 'BEST: ' + bestScore;
+        btnAction.innerText = 'RETRY';
+        overlay.style.display = 'flex';
+      } else {
+        ship.y = cameraY + H * 0.5;
+        ship.vy = -8;
+        ship.vx = 0;
+        ship.tethered = null;
+      }
+    }
+
+    // Clean offscreen items
+    anchors = anchors.filter(a => a.y < cameraY + H + 120);
+    shards = shards.filter(s => s.y < cameraY + H + 120);
+  }
+
+  // Draw
+  ctx.fillStyle = '#080812';
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.save();
+  ctx.translate(0, -cameraY);
+
+  // Draw anchors
+  for (let a of anchors) {
+    a.pulse += 0.04;
+    let r = a.radius + Math.sin(a.pulse) * 2;
+    let grad = ctx.createRadialGradient(a.x, a.y, 2, a.x, a.y, r * 1.8);
+    grad.addColorStop(0, 'rgba(0, 220, 255, 0.9)');
+    grad.addColorStop(1, 'rgba(0, 100, 255, 0)');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(a.x, a.y, r * 1.8, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = '#00f0ff';
+    ctx.beginPath();
+    ctx.arc(a.x, a.y, a.radius * 0.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Draw shards
+  for (let s of shards) {
+    ctx.save();
+    ctx.translate(s.x, s.y);
+    ctx.rotate(s.rot);
+    ctx.fillStyle = '#00ffaa';
+    ctx.shadowColor = '#00ffaa';
+    ctx.shadowBlur = 10;
+    ctx.fillRect(-s.radius, -s.radius, s.radius * 2, s.radius * 2);
+    ctx.restore();
+  }
+
+  // Tether line
+  if (ship.tethered) {
+    ctx.strokeStyle = '#00ffff';
+    ctx.lineWidth = 2.5;
+    ctx.shadowColor = '#00ffff';
+    ctx.shadowBlur = 12;
+    ctx.beginPath();
+    ctx.moveTo(ship.tethered.x, ship.tethered.y);
+    ctx.lineTo(ship.x, ship.y);
+    ctx.stroke();
+  }
+
+  // Particles
+  for (let i = particles.length - 1; i >= 0; i--) {
+    let p = particles[i];
+    p.x += p.vx;
+    p.y += p.vy;
+    p.life -= p.decay;
+    if (p.life <= 0) {
+      particles.splice(i, 1);
+      continue;
+    }
+    ctx.fillStyle = p.color;
+    ctx.globalAlpha = p.life;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 3 * p.life, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+
+  // Ship
+  ctx.save();
+  ctx.translate(ship.x, ship.y);
+  let shipAngle = Math.atan2(ship.vy, ship.vx);
+  ctx.rotate(shipAngle + Math.PI / 2);
+  ctx.shadowColor = '#ff0077';
+  ctx.shadowBlur = 16;
+  ctx.fillStyle = '#ff0077';
+  ctx.beginPath();
+  ctx.moveTo(0, -ship.radius * 1.5);
+  ctx.lineTo(ship.radius, ship.radius);
+  ctx.lineTo(0, ship.radius * 0.6);
+  ctx.lineTo(-ship.radius, ship.radius);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+
+  ctx.restore();
+}
+requestAnimationFrame(update);
+</script>
+</body>
+</html>
