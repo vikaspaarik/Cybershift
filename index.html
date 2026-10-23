@@ -8,35 +8,33 @@
 <meta name="theme-color" content="#0a0a14">
 <title>CYBERSHIFT: NEON DRIFT</title>
 
-<!-- PWA Manifest & Registration -->
 <link rel="manifest" href="./manifest.json">
 <script>
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
-      navigator.serviceWorker.register('./sw.js').catch((err) => {
-        console.error('Service Worker registration failed:', err);
-      });
+      navigator.serviceWorker.register('./sw.js').catch(console.error);
     });
   }
 </script>
 
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; -webkit-user-select: none; }
-  body, html { width: 100%; height: 100%; overflow: hidden; background: #0a0a14; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; touch-action: none; }
-  canvas { display: block; width: 100%; height: 100%; }
-  #hud { position: absolute; top: 16px; left: 16px; right: 16px; display: flex; justify-content: space-between; align-items: center; pointer-events: none; }
-  .hud-box { background: rgba(10, 10, 25, 0.7); border: 1px solid rgba(0, 255, 204, 0.3); padding: 8px 16px; border-radius: 20px; color: #fff; font-size: 16px; font-weight: bold; letter-spacing: 1px; backdrop-filter: blur(4px); }
+  body, html { width: 100%; height: 100%; overflow: hidden; background: #0a0a14; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; touch-action: none; position: fixed; }
+  canvas { display: block; width: 100vw; height: 100vh; touch-action: none; }
+  #hud { position: absolute; top: 16px; left: 16px; right: 16px; display: flex; justify-content: space-between; align-items: center; pointer-events: none; z-index: 5; }
+  .hud-box { background: rgba(10, 10, 25, 0.7); border: 1px solid rgba(0, 255, 204, 0.3); padding: 8px 16px; border-radius: 20px; color: #fff; font-size: 15px; font-weight: bold; letter-spacing: 1px; backdrop-filter: blur(4px); }
   #score { color: #00ffcc; text-shadow: 0 0 10px #00ffcc; }
   #multiplier { color: #ff0077; margin-left: 8px; }
-  #overlay { position: absolute; inset: 0; background: rgba(5, 5, 12, 0.88); display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 10; text-align: center; padding: 24px; }
-  h1 { color: #00ffcc; font-size: 2.4rem; letter-spacing: 4px; text-shadow: 0 0 20px #00ffcc; margin-bottom: 8px; }
-  p.subtitle { color: #aaa; font-size: 0.95rem; margin-bottom: 28px; line-height: 1.5; }
-  .btn-play { background: linear-gradient(135deg, #00ffcc, #0088ff); border: none; padding: 16px 42px; border-radius: 30px; color: #050510; font-size: 1.1rem; font-weight: 800; letter-spacing: 2px; cursor: pointer; box-shadow: 0 0 25px rgba(0,255,204,0.5); transform: scale(1); transition: transform 0.15s; }
-  .btn-play:active { transform: scale(0.95); }
-  #high-score { color: #ffcc00; margin-top: 18px; font-size: 0.9rem; letter-spacing: 1px; }
+  #overlay { position: absolute; inset: 0; background: rgba(5, 5, 12, 0.92); display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 20; text-align: center; padding: 24px; }
+  h1 { color: #00ffcc; font-size: 2.2rem; letter-spacing: 4px; text-shadow: 0 0 20px #00ffcc; margin-bottom: 12px; }
+  p.subtitle { color: #ccc; font-size: 0.95rem; margin-bottom: 30px; line-height: 1.6; max-width: 320px; }
+  .btn-play { background: linear-gradient(135deg, #00ffcc, #0088ff); border: none; padding: 16px 48px; border-radius: 30px; color: #050510; font-size: 1.15rem; font-weight: 800; letter-spacing: 2px; cursor: pointer; box-shadow: 0 0 25px rgba(0,255,204,0.6); pointer-events: auto; }
+  .btn-play:active { transform: scale(0.96); }
+  #high-score { color: #ffcc00; margin-top: 20px; font-size: 0.95rem; letter-spacing: 1px; font-weight: bold; }
 </style>
 </head>
 <body>
+
 <div id="hud">
   <div class="hud-box">SCORE: <span id="score">0</span><span id="multiplier">x1</span></div>
   <div class="hud-box" id="health-box">HP: 3</div>
@@ -44,7 +42,7 @@
 
 <div id="overlay">
   <h1 id="title-text">CYBERSHIFT</h1>
-  <p class="subtitle" id="sub-text">TAP & HOLD to tether to neon anchors.<br>RELEASE to slingshot & collect shards.</p>
+  <p class="subtitle" id="sub-text">TAP & HOLD anywhere to tether.<br>RELEASE to slingshot upward.</p>
   <button class="btn-play" id="btn-action">ENGAGE</button>
   <div id="high-score">BEST: 0</div>
 </div>
@@ -63,7 +61,7 @@ const titleText = document.getElementById('title-text');
 const subText = document.getElementById('sub-text');
 const highScoreEl = document.getElementById('high-score');
 
-let W, H;
+let W = 0, H = 0;
 function resize() {
   W = canvas.width = window.innerWidth;
   H = canvas.height = window.innerHeight;
@@ -71,7 +69,7 @@ function resize() {
 window.addEventListener('resize', resize);
 resize();
 
-// --- AUDIO SYNTHESIS ---
+// --- SOUND ENGINE ---
 let audioCtx = null;
 function playSound(type) {
   try {
@@ -86,32 +84,32 @@ function playSound(type) {
     if (type === 'tether') {
       osc.type = 'sine';
       osc.frequency.setValueAtTime(320, now);
-      osc.frequency.exponentialRampToValueAtTime(580, now + 0.12);
-      gain.gain.setValueAtTime(0.15, now);
-      gain.gain.linearRampToValueAtTime(0.01, now + 0.12);
+      osc.frequency.exponentialRampToValueAtTime(580, now + 0.1);
+      gain.gain.setValueAtTime(0.12, now);
+      gain.gain.linearRampToValueAtTime(0.01, now + 0.1);
       osc.start(now);
-      osc.stop(now + 0.12);
+      osc.stop(now + 0.1);
     } else if (type === 'shard') {
       osc.type = 'triangle';
-      osc.frequency.setValueAtTime(600, now);
-      osc.frequency.exponentialRampToValueAtTime(1200, now + 0.18);
-      gain.gain.setValueAtTime(0.2, now);
-      gain.gain.linearRampToValueAtTime(0.01, now + 0.18);
+      osc.frequency.setValueAtTime(550, now);
+      osc.frequency.exponentialRampToValueAtTime(1100, now + 0.15);
+      gain.gain.setValueAtTime(0.18, now);
+      gain.gain.linearRampToValueAtTime(0.01, now + 0.15);
       osc.start(now);
-      osc.stop(now + 0.18);
+      osc.stop(now + 0.15);
     } else if (type === 'hit') {
       osc.type = 'sawtooth';
-      osc.frequency.setValueAtTime(160, now);
-      osc.frequency.exponentialRampToValueAtTime(40, now + 0.25);
-      gain.gain.setValueAtTime(0.3, now);
-      gain.gain.linearRampToValueAtTime(0.01, now + 0.25);
+      osc.frequency.setValueAtTime(150, now);
+      osc.frequency.exponentialRampToValueAtTime(40, now + 0.2);
+      gain.gain.setValueAtTime(0.25, now);
+      gain.gain.linearRampToValueAtTime(0.01, now + 0.2);
       osc.start(now);
-      osc.stop(now + 0.25);
+      osc.stop(now + 0.2);
     }
   } catch(e){}
 }
 
-// --- GAME STATE ---
+// --- STATE ---
 let state = 'menu';
 let score = 0;
 let multiplier = 1;
@@ -119,26 +117,26 @@ let hp = 3;
 let bestScore = parseInt(localStorage.getItem('cybershift_best') || '0');
 highScoreEl.innerText = 'BEST: ' + bestScore;
 
-let ship = { x: 0, y: 0, vx: 0, vy: 0, radius: 10, tethered: null, angle: 0, orbitDist: 0, dir: 1 };
+let ship = { x: 0, y: 0, vx: 0, vy: 0, radius: 11, tethered: null, angle: 0, orbitDist: 0, dir: 1, angularSpeed: 0 };
 let anchors = [];
 let shards = [];
 let particles = [];
-let touching = false;
 let cameraY = 0;
+let inputLockUntil = 0;
 
 function spawnWorld(startY) {
-  for (let y = startY; y > startY - 1000; y -= 160) {
+  for (let y = startY; y > startY - 1200; y -= 160) {
     anchors.push({
-      x: 60 + Math.random() * (W - 120),
+      x: 70 + Math.random() * (W - 140),
       y: y,
-      radius: 18,
+      radius: 20,
       pulse: Math.random() * Math.PI
     });
-    if (Math.random() > 0.3) {
+    if (Math.random() > 0.35) {
       shards.push({
-        x: 40 + Math.random() * (W - 80),
+        x: 50 + Math.random() * (W - 100),
         y: y + (Math.random() - 0.5) * 80,
-        radius: 7,
+        radius: 8,
         rot: 0
       });
     }
@@ -157,38 +155,45 @@ function resetGame() {
   multEl.innerText = 'x1';
   hpEl.innerText = 'HP: 3';
 
+  // Position ship in lower third
   ship.x = W / 2;
-  ship.y = H * 0.75;
+  ship.y = H * 0.72;
   ship.vx = 0;
-  ship.vy = -7;
+  ship.vy = -6; // upward initial momentum
   ship.tethered = null;
 
-  spawnWorld(H * 0.5);
+  // Initial anchors around and above player
+  anchors.push({ x: W * 0.3, y: H * 0.55, radius: 20, pulse: 0 });
+  anchors.push({ x: W * 0.7, y: H * 0.35, radius: 20, pulse: 1 });
+  spawnWorld(H * 0.2);
+
   state = 'playing';
   overlay.style.display = 'none';
+  inputLockUntil = Date.now() + 300; // prevent immediate tap-through
 }
 
 function addParticles(x, y, color, count = 12) {
   for (let i = 0; i < count; i++) {
     const angle = Math.random() * Math.PI * 2;
-    const speed = 1 + Math.random() * 5;
+    const speed = 1.5 + Math.random() * 4.5;
     particles.push({
       x, y,
       vx: Math.cos(angle) * speed,
       vy: Math.sin(angle) * speed,
       life: 1,
-      decay: 0.02 + Math.random() * 0.03,
+      decay: 0.025 + Math.random() * 0.02,
       color
     });
   }
 }
 
-// --- TOUCH / INPUT ---
-function startTether() {
-  if (state !== 'playing') return;
-  touching = true;
+// --- TOUCH HANDLING ---
+function handleTetherStart() {
+  if (state !== 'playing' || Date.now() < inputLockUntil) return;
+  if (ship.tethered) return;
+
   let closest = null;
-  let minDist = 220;
+  let minDist = 260; // generous snap distance for phone screens
   for (let a of anchors) {
     let d = Math.hypot(ship.x - a.x, ship.y - a.y);
     if (d < minDist) {
@@ -196,11 +201,13 @@ function startTether() {
       closest = a;
     }
   }
+
   if (closest) {
     ship.tethered = closest;
-    ship.orbitDist = minDist;
+    ship.orbitDist = Math.max(minDist, 45);
     ship.angle = Math.atan2(ship.y - closest.y, ship.x - closest.x);
-    let curSpeed = Math.hypot(ship.vx, ship.vy) || 7;
+    let curSpeed = Math.hypot(ship.vx, ship.vy);
+    if (curSpeed < 6) curSpeed = 6;
     let tangentX = -Math.sin(ship.angle);
     let tangentY = Math.cos(ship.angle);
     let dot = ship.vx * tangentX + ship.vy * tangentY;
@@ -210,12 +217,11 @@ function startTether() {
   }
 }
 
-function releaseTether() {
+function handleTetherEnd() {
   if (state !== 'playing') return;
-  touching = false;
   if (ship.tethered) {
-    let speed = Math.abs(ship.angularSpeed * ship.orbitDist) * 1.08;
-    speed = Math.min(speed, 14);
+    let speed = Math.abs(ship.angularSpeed * ship.orbitDist) * 1.12;
+    speed = Math.min(Math.max(speed, 7), 16);
     let releaseAngle = ship.angle + (ship.dir > 0 ? Math.PI / 2 : -Math.PI / 2);
     ship.vx = Math.cos(releaseAngle) * speed;
     ship.vy = Math.sin(releaseAngle) * speed;
@@ -223,23 +229,25 @@ function releaseTether() {
   }
 }
 
-window.addEventListener('touchstart', (e) => { e.preventDefault(); startTether(); }, { passive: false });
-window.addEventListener('touchend', (e) => { e.preventDefault(); releaseTether(); }, { passive: false });
-window.addEventListener('mousedown', startTether);
-window.addEventListener('mouseup', releaseTether);
+// Global touch bindings for canvas
+canvas.addEventListener('touchstart', (e) => { e.preventDefault(); handleTetherStart(); }, { passive: false });
+canvas.addEventListener('touchend', (e) => { e.preventDefault(); handleTetherEnd(); }, { passive: false });
+canvas.addEventListener('mousedown', handleTetherStart);
+canvas.addEventListener('mouseup', handleTetherEnd);
 
-btnAction.addEventListener('click', () => {
+// Button click handlers (stop propagation to avoid trigger-through)
+function startButtonAction(e) {
+  e.preventDefault();
+  e.stopPropagation();
   playSound('shard');
   resetGame();
-});
+}
+btnAction.addEventListener('click', startButtonAction);
+btnAction.addEventListener('touchend', startButtonAction);
 
 // --- MAIN LOOP ---
-let lastTime = performance.now();
 function update() {
   requestAnimationFrame(update);
-  let now = performance.now();
-  let dt = (now - lastTime) / 1000;
-  lastTime = now;
 
   if (state === 'playing') {
     if (ship.tethered) {
@@ -250,13 +258,15 @@ function update() {
     } else {
       ship.x += ship.vx;
       ship.y += ship.vy;
-      ship.vy += 0.08;
+      ship.vy += 0.08; // subtle gravity
     }
 
-    if (ship.x < ship.radius) { ship.x = ship.radius; ship.vx = -ship.vx * 0.6; }
-    if (ship.x > W - ship.radius) { ship.x = W - ship.radius; ship.vx = -ship.vx * 0.6; }
+    // Screen walls
+    if (ship.x < ship.radius) { ship.x = ship.radius; ship.vx = Math.abs(ship.vx) * 0.7; }
+    if (ship.x > W - ship.radius) { ship.x = W - ship.radius; ship.vx = -Math.abs(ship.vx) * 0.7; }
 
-    let targetCamY = ship.y - H * 0.65;
+    // Smooth upward camera follow
+    let targetCamY = ship.y - H * 0.62;
     if (targetCamY < cameraY) {
       let earned = Math.floor((cameraY - targetCamY) * 0.2);
       score += earned;
@@ -264,15 +274,17 @@ function update() {
       cameraY = targetCamY;
     }
 
+    // Infinite world generator
     let topAnchor = anchors.reduce((min, a) => a.y < min ? a.y : min, H);
-    if (topAnchor > cameraY - 400) {
-      spawnWorld(topAnchor - 100);
+    if (topAnchor > cameraY - 450) {
+      spawnWorld(topAnchor - 120);
     }
 
+    // Shard pickups
     for (let i = shards.length - 1; i >= 0; i--) {
       let s = shards[i];
-      s.rot += 0.04;
-      if (Math.hypot(ship.x - s.x, ship.y - s.y) < ship.radius + s.radius + 8) {
+      s.rot += 0.05;
+      if (Math.hypot(ship.x - s.x, ship.y - s.y) < ship.radius + s.radius + 12) {
         addParticles(s.x, s.y, '#00ffcc', 14);
         playSound('shard');
         score += 150 * multiplier;
@@ -283,7 +295,8 @@ function update() {
       }
     }
 
-    if (ship.y - cameraY > H + 50) {
+    // Fall death check
+    if (ship.y - cameraY > H + 60) {
       hp--;
       hpEl.innerText = 'HP: ' + hp;
       playSound('hit');
@@ -294,33 +307,35 @@ function update() {
           localStorage.setItem('cybershift_best', bestScore);
         }
         titleText.innerText = 'DRIFT OVER';
-        subText.innerHTML = `FINAL SCORE: <strong style="color:#00ffcc">${score}</strong><br>Keep momentum and ride the slingshots!`;
+        subText.innerHTML = `SCORE: <strong style="color:#00ffcc">${score}</strong><br>Tap & hold to latch onto anchors!`;
         highScoreEl.innerText = 'BEST: ' + bestScore;
         btnAction.innerText = 'RETRY';
         overlay.style.display = 'flex';
       } else {
         ship.y = cameraY + H * 0.5;
-        ship.vy = -8;
+        ship.vy = -7;
         ship.vx = 0;
         ship.tethered = null;
       }
     }
 
-    anchors = anchors.filter(a => a.y < cameraY + H + 120);
-    shards = shards.filter(s => s.y < cameraY + H + 120);
+    anchors = anchors.filter(a => a.y < cameraY + H + 150);
+    shards = shards.filter(s => s.y < cameraY + H + 150);
   }
 
+  // --- RENDER ---
   ctx.fillStyle = '#080812';
   ctx.fillRect(0, 0, W, H);
 
   ctx.save();
   ctx.translate(0, -cameraY);
 
+  // Anchors
   for (let a of anchors) {
     a.pulse += 0.04;
     let r = a.radius + Math.sin(a.pulse) * 2;
     let grad = ctx.createRadialGradient(a.x, a.y, 2, a.x, a.y, r * 1.8);
-    grad.addColorStop(0, 'rgba(0, 220, 255, 0.9)');
+    grad.addColorStop(0, 'rgba(0, 220, 255, 0.85)');
     grad.addColorStop(1, 'rgba(0, 100, 255, 0)');
     ctx.fillStyle = grad;
     ctx.beginPath();
@@ -333,6 +348,7 @@ function update() {
     ctx.fill();
   }
 
+  // Shards
   for (let s of shards) {
     ctx.save();
     ctx.translate(s.x, s.y);
@@ -344,9 +360,10 @@ function update() {
     ctx.restore();
   }
 
+  // Tether line
   if (ship.tethered) {
     ctx.strokeStyle = '#00ffff';
-    ctx.lineWidth = 2.5;
+    ctx.lineWidth = 3;
     ctx.shadowColor = '#00ffff';
     ctx.shadowBlur = 12;
     ctx.beginPath();
@@ -355,6 +372,7 @@ function update() {
     ctx.stroke();
   }
 
+  // Particles
   for (let i = particles.length - 1; i >= 0; i--) {
     let p = particles[i];
     p.x += p.vx;
@@ -372,6 +390,7 @@ function update() {
   }
   ctx.globalAlpha = 1;
 
+  // Ship
   ctx.save();
   ctx.translate(ship.x, ship.y);
   let shipAngle = Math.atan2(ship.vy, ship.vx);
