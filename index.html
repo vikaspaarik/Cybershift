@@ -6,56 +6,44 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#0a0a14">
 <title>CYBERSHIFT</title>
-
-<link rel="manifest" href="./manifest.json">
-<script>
-  if ('serviceWorker' in navigator) {
-    window.addEventListener('load', () => {
-      navigator.serviceWorker.register('./sw.js').then((reg) => {
-        reg.update();
-      }).catch(console.error);
-    });
-  }
-</script>
-
 <style>
-  * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; -webkit-user-select: none; }
-  html, body { width: 100%; height: 100%; overflow: hidden; background: #0a0a14; font-family: sans-serif; position: fixed; }
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #0a0a14; font-family: -apple-system, sans-serif; position: fixed; }
   canvas { display: block; width: 100vw; height: 100vh; position: absolute; top: 0; left: 0; z-index: 1; }
-  
-  #hud { position: absolute; top: 16px; left: 16px; right: 16px; display: flex; justify-content: space-between; pointer-events: none; z-index: 5; }
-  .hud-box { background: rgba(10, 10, 25, 0.7); border: 1px solid rgba(0, 255, 204, 0.3); padding: 8px 16px; border-radius: 20px; color: #fff; font-size: 15px; font-weight: bold; }
+
+  #hud { position: absolute; top: 16px; left: 16px; right: 16px; display: flex; justify-content: space-between; pointer-events: none; z-index: 10; }
+  .hud-box { background: rgba(10, 10, 25, 0.75); border: 1px solid rgba(0, 255, 204, 0.4); padding: 8px 16px; border-radius: 20px; color: #fff; font-size: 15px; font-weight: bold; }
   #score { color: #00ffcc; }
   #multiplier { color: #ff0077; margin-left: 6px; }
-  
+
   #overlay {
     position: absolute;
     inset: 0;
-    background: rgba(5, 5, 12, 0.95);
+    background: rgba(5, 5, 12, 0.94);
     display: flex;
     flex-direction: column;
     justify-content: center;
     align-items: center;
-    z-index: 100;
+    z-index: 999;
     text-align: center;
-    padding: 20px;
+    padding: 24px;
   }
-  h1 { color: #00ffcc; font-size: 2.3rem; letter-spacing: 4px; margin-bottom: 12px; }
-  p { color: #ccc; font-size: 1rem; margin-bottom: 30px; line-height: 1.5; }
+  h1 { color: #00ffcc; font-size: 2.4rem; letter-spacing: 4px; margin-bottom: 12px; text-shadow: 0 0 20px #00ffcc; }
+  p { color: #ccc; font-size: 1.05rem; margin-bottom: 34px; line-height: 1.6; max-width: 300px; }
   
-  #btn-action {
+  .btn-play {
     background: linear-gradient(135deg, #00ffcc, #0088ff);
     border: none;
-    padding: 18px 50px;
-    border-radius: 35px;
+    padding: 18px 52px;
+    border-radius: 40px;
     color: #050510;
-    font-size: 1.2rem;
+    font-size: 1.25rem;
     font-weight: 900;
     letter-spacing: 2px;
-    outline: none;
-    box-shadow: 0 0 25px rgba(0, 255, 204, 0.6);
+    box-shadow: 0 0 30px rgba(0, 255, 204, 0.7);
+    cursor: pointer;
   }
-  #high-score { color: #ffcc00; margin-top: 20px; font-size: 1rem; }
+  #high-score { color: #ffcc00; margin-top: 24px; font-size: 1rem; font-weight: bold; }
 </style>
 </head>
 <body>
@@ -67,14 +55,21 @@
 
 <div id="overlay">
   <h1 id="title-text">CYBERSHIFT</h1>
-  <p id="sub-text">TAP & HOLD to tether to rings.<br>RELEASE to slingshot upward!</p>
-  <button id="btn-action" type="button">ENGAGE</button>
+  <p id="sub-text">TAP & HOLD anywhere to tether.<br>RELEASE to slingshot upward!</p>
+  <button class="btn-play" id="btn-action">TAP TO PLAY</button>
   <div id="high-score">BEST: 0</div>
 </div>
 
 <canvas id="game"></canvas>
 
 <script>
+// Clear any stuck service worker cache
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.getRegistrations().then(regs => {
+    for (let r of regs) r.unregister();
+  });
+}
+
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
 const scoreEl = document.getElementById('score');
@@ -86,11 +81,8 @@ const titleText = document.getElementById('title-text');
 const subText = document.getElementById('sub-text');
 const highScoreEl = document.getElementById('high-score');
 
-let W = window.innerWidth;
-let H = window.innerHeight;
-canvas.width = W;
-canvas.height = H;
-
+let W = canvas.width = window.innerWidth;
+let H = canvas.height = window.innerHeight;
 window.addEventListener('resize', () => {
   W = canvas.width = window.innerWidth;
   H = canvas.height = window.innerHeight;
@@ -107,10 +99,10 @@ let ship = { x: W / 2, y: H * 0.75, vx: 0, vy: -5, radius: 12, tethered: null, a
 let anchors = [];
 let shards = [];
 let cameraY = 0;
-let ignoreUntil = 0;
+let ignoreTouchUntil = 0;
 
 function spawnWorld(startY) {
-  for (let y = startY; y > startY - 1400; y -= 180) {
+  for (let y = startY; y > startY - 1400; y -= 170) {
     anchors.push({
       x: 60 + Math.random() * (W - 120),
       y: y,
@@ -128,7 +120,7 @@ function spawnWorld(startY) {
   }
 }
 
-function startGame() {
+function launchGame() {
   score = 0;
   multiplier = 1;
   hp = 3;
@@ -140,35 +132,31 @@ function startGame() {
   hpEl.innerText = 'HP: 3';
 
   ship.x = W / 2;
-  ship.y = H * 0.75;
+  ship.y = H * 0.72;
   ship.vx = 0;
   ship.vy = -6;
   ship.tethered = null;
 
-  anchors.push({ x: W * 0.35, y: H * 0.55, radius: 22, pulse: 0 });
-  anchors.push({ x: W * 0.65, y: H * 0.35, radius: 22, pulse: 1.5 });
-  spawnWorld(H * 0.2);
+  anchors.push({ x: W * 0.35, y: H * 0.52, radius: 22, pulse: 0 });
+  anchors.push({ x: W * 0.65, y: H * 0.32, radius: 22, pulse: 1.5 });
+  spawnWorld(H * 0.15);
 
   overlay.style.display = 'none';
   state = 'playing';
-  ignoreUntil = Date.now() + 350;
+  ignoreTouchUntil = Date.now() + 300;
 }
 
-btnAction.addEventListener('click', (e) => {
-  e.preventDefault();
-  startGame();
-});
+// Direct touch trigger on the overlay/button
+btnAction.addEventListener('pointerdown', (e) => { e.stopPropagation(); launchGame(); });
+overlay.addEventListener('pointerdown', () => { if (state !== 'playing') launchGame(); });
 
-btnAction.addEventListener('touchstart', (e) => {
-  e.stopPropagation();
-}, { passive: true });
-
-function onActionDown(e) {
-  if (state !== 'playing' || Date.now() < ignoreUntil) return;
+// Gameplay tether controls
+function handleTetherStart(e) {
+  if (state !== 'playing' || Date.now() < ignoreTouchUntil) return;
   if (ship.tethered) return;
 
   let closest = null;
-  let minDist = 280;
+  let minDist = 300;
   for (let a of anchors) {
     let d = Math.hypot(ship.x - a.x, ship.y - a.y);
     if (d < minDist) {
@@ -191,11 +179,11 @@ function onActionDown(e) {
   }
 }
 
-function onActionUp(e) {
+function handleTetherEnd() {
   if (state !== 'playing') return;
   if (ship.tethered) {
     let speed = Math.abs(ship.angularSpeed * ship.orbitDist) * 1.15;
-    speed = Math.min(Math.max(speed, 8), 17);
+    speed = Math.min(Math.max(speed, 8), 18);
     let releaseAngle = ship.angle + (ship.dir > 0 ? Math.PI / 2 : -Math.PI / 2);
     ship.vx = Math.cos(releaseAngle) * speed;
     ship.vy = Math.sin(releaseAngle) * speed;
@@ -203,10 +191,8 @@ function onActionUp(e) {
   }
 }
 
-window.addEventListener('touchstart', onActionDown, { passive: true });
-window.addEventListener('touchend', onActionUp, { passive: true });
-window.addEventListener('mousedown', onActionDown);
-window.addEventListener('mouseup', onActionUp);
+window.addEventListener('pointerdown', handleTetherStart);
+window.addEventListener('pointerup', handleTetherEnd);
 
 function update() {
   requestAnimationFrame(update);
@@ -260,9 +246,9 @@ function update() {
           localStorage.setItem('cybershift_best', bestScore);
         }
         titleText.innerText = 'DRIFT OVER';
-        subText.innerHTML = `SCORE: <strong style="color:#00ffcc">${score}</strong><br>Tap & hold to latch, release to shoot up!`;
+        subText.innerHTML = `SCORE: <strong style="color:#00ffcc">${score}</strong><br>Tap anywhere to try again!`;
         highScoreEl.innerText = 'BEST: ' + bestScore;
-        btnAction.innerText = 'RETRY';
+        btnAction.innerText = 'PLAY AGAIN';
         overlay.style.display = 'flex';
       } else {
         ship.y = cameraY + H * 0.5;
@@ -276,12 +262,14 @@ function update() {
     shards = shards.filter(s => s.y < cameraY + H + 180);
   }
 
+  // Draw
   ctx.fillStyle = '#080812';
   ctx.fillRect(0, 0, W, H);
 
   ctx.save();
   ctx.translate(0, -cameraY);
 
+  // Anchors
   for (let a of anchors) {
     a.pulse += 0.04;
     let r = a.radius + Math.sin(a.pulse) * 3;
@@ -297,6 +285,7 @@ function update() {
     ctx.fill();
   }
 
+  // Shards
   for (let s of shards) {
     ctx.save();
     ctx.translate(s.x, s.y);
@@ -306,6 +295,7 @@ function update() {
     ctx.restore();
   }
 
+  // Tether line
   if (ship.tethered) {
     ctx.strokeStyle = '#00ffff';
     ctx.lineWidth = 3;
@@ -315,6 +305,7 @@ function update() {
     ctx.stroke();
   }
 
+  // Ship
   ctx.save();
   ctx.translate(ship.x, ship.y);
   let shipAngle = Math.atan2(ship.vy, ship.vx);
