@@ -7,6 +7,19 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="theme-color" content="#0a0a14">
 <title>CYBERSHIFT: NEON DRIFT</title>
+
+<!-- PWA Manifest & Registration -->
+<link rel="manifest" href="./manifest.json">
+<script>
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('./sw.js').catch((err) => {
+        console.error('Service Worker registration failed:', err);
+      });
+    });
+  }
+</script>
+
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; -webkit-user-select: none; }
   body, html { width: 100%; height: 100%; overflow: hidden; background: #0a0a14; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; touch-action: none; }
@@ -237,14 +250,12 @@ function update() {
     } else {
       ship.x += ship.vx;
       ship.y += ship.vy;
-      ship.vy += 0.08; // subtle gravity pull
+      ship.vy += 0.08;
     }
 
-    // Screen bounds bounce
     if (ship.x < ship.radius) { ship.x = ship.radius; ship.vx = -ship.vx * 0.6; }
     if (ship.x > W - ship.radius) { ship.x = W - ship.radius; ship.vx = -ship.vx * 0.6; }
 
-    // Camera follow (moves upward)
     let targetCamY = ship.y - H * 0.65;
     if (targetCamY < cameraY) {
       let earned = Math.floor((cameraY - targetCamY) * 0.2);
@@ -253,13 +264,11 @@ function update() {
       cameraY = targetCamY;
     }
 
-    // Spawn more ahead
     let topAnchor = anchors.reduce((min, a) => a.y < min ? a.y : min, H);
     if (topAnchor > cameraY - 400) {
       spawnWorld(topAnchor - 100);
     }
 
-    // Shard collection
     for (let i = shards.length - 1; i >= 0; i--) {
       let s = shards[i];
       s.rot += 0.04;
@@ -274,7 +283,6 @@ function update() {
       }
     }
 
-    // Fall death check
     if (ship.y - cameraY > H + 50) {
       hp--;
       hpEl.innerText = 'HP: ' + hp;
@@ -298,19 +306,16 @@ function update() {
       }
     }
 
-    // Clean offscreen items
     anchors = anchors.filter(a => a.y < cameraY + H + 120);
     shards = shards.filter(s => s.y < cameraY + H + 120);
   }
 
-  // Draw
   ctx.fillStyle = '#080812';
   ctx.fillRect(0, 0, W, H);
 
   ctx.save();
   ctx.translate(0, -cameraY);
 
-  // Draw anchors
   for (let a of anchors) {
     a.pulse += 0.04;
     let r = a.radius + Math.sin(a.pulse) * 2;
@@ -328,7 +333,6 @@ function update() {
     ctx.fill();
   }
 
-  // Draw shards
   for (let s of shards) {
     ctx.save();
     ctx.translate(s.x, s.y);
@@ -340,7 +344,6 @@ function update() {
     ctx.restore();
   }
 
-  // Tether line
   if (ship.tethered) {
     ctx.strokeStyle = '#00ffff';
     ctx.lineWidth = 2.5;
@@ -352,7 +355,6 @@ function update() {
     ctx.stroke();
   }
 
-  // Particles
   for (let i = particles.length - 1; i >= 0; i--) {
     let p = particles[i];
     p.x += p.vx;
@@ -370,7 +372,6 @@ function update() {
   }
   ctx.globalAlpha = 1;
 
-  // Ship
   ctx.save();
   ctx.translate(ship.x, ship.y);
   let shipAngle = Math.atan2(ship.vy, ship.vx);
