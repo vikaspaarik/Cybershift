@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>CYBERSHIFT</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #080812; touch-action: none; position: fixed; }
+  canvas { display: block; width: 100vw; height: 100vh; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+// Unregister all old service workers immediately
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.getRegistrations().then(regs => {
+    regs.forEach(r => r.unregister());
+  });
+}
+
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+
+let W = canvas.width = window.innerWidth;
+let H = canvas.height = window.innerHeight;
+window.addEventListener('resize', () => {
+  W = canvas.width = window.innerWidth;
+  H = canvas.height = window.innerHeight;
+});
+
+let state = 'menu'; // 'menu', 'playing', 'over'
+let score = 0;
+let multiplier = 1;
+let hp = 3;
+let best = parseInt(localStorage.getItem('cs_best') || '0');
+
+let ship = { x: W / 2, y: H * 0.75, vx: 0, vy: -5, r: 12, tether: null, angle: 0, dist: 0, dir: 1, spd: 0 };
+let anchors = [];
+let shards = [];
+let camY = 0;
+
+function spawn(startY) {
+  for (let y = startY; y > startY - 1200; y -= 170) {
+    anchors.push({ x: 60 + Math.random() * (W - 120), y: y, r: 22, p: Math.random() * 6 });
+    if (Math.random() > 0.3) {
+      shards.push({ x: 40 + Math.random() * (W - 80), y: y + (Math.random() - 0.5) * 80, r: 8, rot: 0 });
+    }
+  }
+}
+
+function start() {
+  score = 0;
+  multiplier = 1;
+  hp = 3;
+  camY = 0;
+  anchors = [];
+  shards = [];
+  ship.x = W / 2;
+  ship.y = H * 0.72;
+  ship.vx = 0;
+  ship.vy = -6;
+  ship.tether = null;
+
+  anchors.push({ x: W * 0.35, y: H * 0.5, r: 22, p: 0 });
+  anchors.push({ x: W * 0.65, y: H * 0.3, r: 22, p: 1.5 });
+  spawn(H * 0.15);
+
+  state = 'playing';
+}
+
+function handleDown(e) {
+  if (state === 'menu' || state === 'over') {
+    start();
+    return;
+  }
+  if (ship.tether) return;
+
+  let closest = null, minD = 300;
+  for (let a of anchors) {
+    let d = Math.hypot(ship.x - a.x, ship.y - a.y);
+    if (d < minD) { minD = d; closest = a; }
+  }
+
+  if (closest) {
+    ship.tether = closest;
+    ship.dist = Math.max(minD, 45);
+    ship.angle = Math.atan2(ship.y - closest.y, ship.x - closest.x);
+    let spd = Math.hypot(ship.vx, ship.vy);
+    if (spd < 7) spd = 7;
+    let dot = ship.vx * (-Math.sin(ship.angle)) + ship.vy * (Math.cos(ship.angle));
+    ship.dir = dot >= 0 ? 1 : -1;
+    ship.spd = (spd / ship.dist) * ship.dir;
+  }
+}
+
+function handleUp() {
+  if (state !== 'playing' || !ship.tether) return;
+  let spd = Math.min(Math.max(Math.abs(ship.spd * ship.dist) * 1.15, 8), 18);
+  let relAngle = ship.angle + (ship.dir > 0 ? Math.PI / 2 : -Math.PI / 2);
+  ship.vx = Math.cos(relAngle) * spd;
+  ship.vy = Math.sin(relAngle) * spd;
+  ship.tether = null;
+}
+
+window.addEventListener('pointerdown', handleDown);
+window.addEventListener('pointerup', handleUp);
+
+function loop() {
+  requestAnimationFrame(loop);
+
+  if (state === 'playing') {
+    if (ship.tether) {
+      ship.angle += ship.spd;
+      ship.x = ship.tether.x + Math.cos(ship.angle) * ship.dist;
+      ship.y = ship.tether.y + Math.sin(ship.angle) * ship.dist;
+    } else {
+      ship.x += ship.vx;
+      ship.y += ship.vy;
+      ship.vy += 0.08;
+    }
+
+    if (ship.x < ship.r) { ship.x = ship.r; ship.vx = Math.abs(ship.vx) * 0.7; }
+    if (ship.x > W - ship.r) { ship.x = W - ship.r; ship.vx = -Math.abs(ship.vx) * 0.7; }
+
+    let targetY = ship.y - H * 0.65;
+    if (targetY < camY) {
+      score += Math.floor((camY - targetY) * 0.2);
+      camY = targetY;
+    }
+
+    let topA = anchors.reduce((m, a) => a.y < m ? a.y : m, H);
+    if (topA > camY - 450) spawn(topA - 120);
+
+    for (let i = shards.length - 1; i >= 0; i--) {
+      let s = shards[i];
+      s.rot += 0.04;
+      if (Math.hypot(ship.x - s.x, ship.y - s.y) < ship.r + s.r + 14) {
+        score += 150 * multiplier;
+        multiplier = Math.min(8, multiplier + 1);
+        shards.splice(i, 1);
+      }
+    }
+
+    if (ship.y - camY > H + 50) {
+      hp--;
+      if (hp <= 0) {
+        state = 'over';
+        if (score > best) { best = score; localStorage.setItem('cs_best', best); }
+      } else {
+        ship.y = camY + H * 0.5;
+        ship.vy = -7;
+        ship.vx = 0;
+        ship.tether = null;
+      }
+    }
+
+    anchors = anchors.filter(a => a.y < camY + H + 180);
+    shards = shards.filter(s => s.y < camY + H + 180);
+  }
+
+  // Draw background
+  ctx.fillStyle = '#080812';
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.save();
+  ctx.translate(0, -camY);
+
+  // Rings
+  for (let a of anchors) {
+    a.p += 0.04;
+    let r = a.r + Math.sin(a.p) * 3;
+    ctx.strokeStyle = '#00f0ff';
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.arc(a.x, a.y, r, 0, Math.PI * 2);
+    ctx.stroke();
+
+    ctx.fillStyle = '#00f0ff';
+    ctx.beginPath();
+    ctx.arc(a.x, a.y, 6, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Shards
+  for (let s of shards) {
+    ctx.save();
+    ctx.translate(s.x, s.y);
+    ctx.rotate(s.rot);
+    ctx.fillStyle = '#00ffaa';
+    ctx.fillRect(-s.r, -s.r, s.r * 2, s.r * 2);
+    ctx.restore();
+  }
+
+  // Tether line
+  if (ship.tether) {
+    ctx.strokeStyle = '#00ffff';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(ship.tether.x, ship.tether.y);
+    ctx.lineTo(ship.x, ship.y);
+    ctx.stroke();
+  }
+
+  // Ship
+  ctx.save();
+  ctx.translate(ship.x, ship.y);
+  let shipAngle = Math.atan2(ship.vy, ship.vx);
+  ctx.rotate(shipAngle + Math.PI / 2);
+  ctx.fillStyle = '#ff0077';
+  ctx.beginPath();
+  ctx.moveTo(0, -ship.r * 1.5);
+  ctx.lineTo(ship.r, ship.r);
+  ctx.lineTo(0, ship.r * 0.6);
+  ctx.lineTo(-ship.r, ship.r);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+
+  ctx.restore();
+
+  // HUD (in game)
+  if (state === 'playing') {
+    ctx.fillStyle = '#00ffcc';
+    ctx.font = 'bold 18px sans-serif';
+    ctx.fillText('SCORE: ' + score + ' (x' + multiplier + ')', 20, 40);
+    ctx.fillStyle = '#ff0077';
+    ctx.fillText('HP: ' + hp, W - 70, 40);
+  }
+
+  // Menu / Game Over Screen
+  if (state === 'menu' || state === 'over') {
+    ctx.fillStyle = 'rgba(5, 5, 12, 0.85)';
+    ctx.fillRect(0, 0, W, H);
+
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#00ffcc';
+    ctx.font = 'bold 36px sans-serif';
+    ctx.fillText(state === 'menu' ? 'CYBERSHIFT' : 'DRIFT OVER', W / 2, H * 0.38);
+
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '16px sans-serif';
+    if (state === 'menu') {
+      ctx.fillText('TAP & HOLD to tether rings', W / 2, H * 0.44);
+      ctx.fillText('RELEASE to slingshot upward', W / 2, H * 0.48);
+    } else {
+      ctx.fillText('SCORE: ' + score, W / 2, H * 0.45);
+    }
+
+    // Big green start box
+    ctx.fillStyle = '#00ffcc';
+    ctx.beginPath();
+    ctx.roundRect(W / 2 - 110, H * 0.54, 220, 56, 28);
+    ctx.fill();
+
+    ctx.fillStyle = '#050510';
+    ctx.font = 'bold 20px sans-serif';
+    ctx.fillText(state === 'menu' ? 'TAP TO START' : 'PLAY AGAIN', W / 2, H * 0.54 + 35);
+
+    ctx.fillStyle = '#ffcc00';
+    ctx.font = '15px sans-serif';
+    ctx.fillText('BEST SCORE: ' + best, W / 2, H * 0.68);
+  }
+}
+loop();
+</script>
+</body>
+</html>
