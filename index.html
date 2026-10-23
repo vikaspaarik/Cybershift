@@ -10,9 +10,11 @@
 <link rel="manifest" href="./manifest.json">
 <script>
   if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('./sw.js').then((reg) => {
-      reg.update();
-    }).catch(console.error);
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('./sw.js').then((reg) => {
+        reg.update();
+      }).catch(console.error);
+    });
   }
 </script>
 
@@ -104,9 +106,7 @@ highScoreEl.innerText = 'BEST: ' + bestScore;
 let ship = { x: W / 2, y: H * 0.75, vx: 0, vy: -5, radius: 12, tethered: null, angle: 0, orbitDist: 0, dir: 1, angularSpeed: 0 };
 let anchors = [];
 let shards = [];
-let particles = [];
 let cameraY = 0;
-let isPointerDown = false;
 let ignoreUntil = 0;
 
 function spawnWorld(startY) {
@@ -135,7 +135,6 @@ function startGame() {
   cameraY = 0;
   anchors = [];
   shards = [];
-  particles = [];
   scoreEl.innerText = '0';
   multEl.innerText = 'x1';
   hpEl.innerText = 'HP: 3';
@@ -152,22 +151,20 @@ function startGame() {
 
   overlay.style.display = 'none';
   state = 'playing';
-  ignoreUntil = Date.now() + 350; // ignores the tap that clicked the button
+  ignoreUntil = Date.now() + 350;
 }
 
-// Button handling
-btnAction.onclick = function(e) {
+btnAction.addEventListener('click', (e) => {
   e.preventDefault();
   startGame();
-};
-btnAction.ontouchstart = function(e) {
-  e.stopPropagation();
-};
+});
 
-// Controls
+btnAction.addEventListener('touchstart', (e) => {
+  e.stopPropagation();
+}, { passive: true });
+
 function onActionDown(e) {
   if (state !== 'playing' || Date.now() < ignoreUntil) return;
-  isPointerDown = true;
   if (ship.tethered) return;
 
   let closest = null;
@@ -196,7 +193,6 @@ function onActionDown(e) {
 
 function onActionUp(e) {
   if (state !== 'playing') return;
-  isPointerDown = false;
   if (ship.tethered) {
     let speed = Math.abs(ship.angularSpeed * ship.orbitDist) * 1.15;
     speed = Math.min(Math.max(speed, 8), 17);
@@ -280,14 +276,12 @@ function update() {
     shards = shards.filter(s => s.y < cameraY + H + 180);
   }
 
-  // Draw
   ctx.fillStyle = '#080812';
   ctx.fillRect(0, 0, W, H);
 
   ctx.save();
   ctx.translate(0, -cameraY);
 
-  // Anchors
   for (let a of anchors) {
     a.pulse += 0.04;
     let r = a.radius + Math.sin(a.pulse) * 3;
@@ -303,7 +297,6 @@ function update() {
     ctx.fill();
   }
 
-  // Shards
   for (let s of shards) {
     ctx.save();
     ctx.translate(s.x, s.y);
@@ -313,7 +306,6 @@ function update() {
     ctx.restore();
   }
 
-  // Tether
   if (ship.tethered) {
     ctx.strokeStyle = '#00ffff';
     ctx.lineWidth = 3;
@@ -323,7 +315,6 @@ function update() {
     ctx.stroke();
   }
 
-  // Ship
   ctx.save();
   ctx.translate(ship.x, ship.y);
   let shipAngle = Math.atan2(ship.vy, ship.vx);
