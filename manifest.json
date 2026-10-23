@@ -1,0 +1,23 @@
+{
+  "name": "Cybershift: Neon Drift",
+  "short_name": "Cybershift",
+  "start_url": "./index.html",
+  "display": "fullscreen",
+  "orientation": "portrait",
+  "background_color": "#0a0a14",
+  "theme_color": "#0a0a14",
+  "icons": [
+    {
+      "src": "https://dummyimage.com/192x192/0a0a14/00ffcc.png&text=CS",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "https://dummyimage.com/512x512/0a0a14/00ffcc.png&text=CS",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
