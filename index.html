@@ -3,33 +3,34 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>CYBERSHIFT: AR FACE EDITION</title>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>CYBERSHIFT AR</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-  html, body { width: 100%; height: 100%; overflow: hidden; background: #030308; font-family: -apple-system, sans-serif; position: fixed; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #050510; font-family: -apple-system, sans-serif; position: fixed; }
   
-  /* Mirror front camera in the background */
   #cam-video {
     position: absolute; top: 0; left: 0; width: 100vw; height: 100vh;
-    object-fit: cover; transform: scaleX(-1); opacity: 0.35; z-index: 1;
+    object-fit: cover; transform: scaleX(-1); opacity: 0.3; z-index: 1; pointer-events: none;
   }
   
-  canvas { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 2; }
-  
-  #cam-prompt {
+  canvas { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 2; display: block; }
+
+  #overlay {
     position: absolute; inset: 0; background: rgba(5,5,15,0.95);
     display: flex; flex-direction: column; justify-content: center; align-items: center;
-    z-index: 100; text-align: center; padding: 24px;
+    z-index: 999; text-align: center; padding: 24px;
   }
-  h1 { color: #00ffcc; font-size: 2.2rem; letter-spacing: 4px; text-shadow: 0 0 20px #00ffcc; margin-bottom: 12px; }
-  p { color: #ccc; font-size: 1rem; line-height: 1.6; margin-bottom: 28px; max-width: 310px; }
+  h1 { color: #00ffcc; font-size: 2.2rem; letter-spacing: 4px; text-shadow: 0 0 20px #00ffcc; margin-bottom: 10px; }
+  p { color: #ccc; font-size: 0.95rem; line-height: 1.6; margin-bottom: 26px; max-width: 300px; }
   
   .btn-ar {
     background: linear-gradient(135deg, #00ffcc, #0088ff);
-    border: none; padding: 18px 46px; border-radius: 35px;
-    color: #050510; font-size: 1.15rem; font-weight: 900; letter-spacing: 2px;
-    box-shadow: 0 0 25px rgba(0,255,204,0.6);
+    border: none; padding: 18px 48px; border-radius: 35px;
+    color: #050510; font-size: 1.2rem; font-weight: 900; letter-spacing: 2px;
+    box-shadow: 0 0 25px rgba(0,255,204,0.6); cursor: pointer;
   }
+  #high-score { color: #ffcc00; margin-top: 20px; font-size: 0.95rem; font-weight: bold; }
 </style>
 </head>
 <body>
@@ -37,18 +38,22 @@
 <video id="cam-video" autoplay playsinline muted></video>
 <canvas id="c"></canvas>
 
-<div id="cam-prompt">
-  <h1>CYBERSHIFT AR</h1>
-  <p>TILT your head to steer.<br>OPEN MOUTH to tether & slingshot!<br>Enable camera to start.</p>
-  <button class="btn-ar" id="btn-start">START AR RUN</button>
+<div id="overlay">
+  <h1 id="title-text">CYBERSHIFT AR</h1>
+  <p id="sub-text">TAP & HOLD (or open mouth) to tether rings.<br>RELEASE to slingshot upward!</p>
+  <button class="btn-ar" id="btn-play">ENGAGE</button>
+  <div id="high-score">BEST: 0</div>
 </div>
 
 <script>
 const video = document.getElementById('cam-video');
 const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');
-const promptEl = document.getElementById('cam-prompt');
-const btnStart = document.getElementById('btn-start');
+const overlay = document.getElementById('overlay');
+const btnPlay = document.getElementById('btn-play');
+const titleText = document.getElementById('title-text');
+const subText = document.getElementById('sub-text');
+const bestEl = document.getElementById('high-score');
 
 let W = canvas.width = window.innerWidth;
 let H = canvas.height = window.innerHeight;
@@ -57,47 +62,33 @@ window.addEventListener('resize', () => {
   H = canvas.height = window.innerHeight;
 });
 
-let state = 'prompt'; // prompt, playing, over
+let state = 'menu'; // 'menu', 'playing', 'over'
 let score = 0;
 let multiplier = 1;
-let best = parseInt(localStorage.getItem('cs_ar_best') || '0');
+let hp = 3;
+let bestScore = parseInt(localStorage.getItem('cs_ar_best') || '0');
+bestEl.innerText = 'BEST: ' + bestScore;
 
-// Head / Face tracking state
-let headTilt = 0; // -1 (left) to +1 (right)
-let mouthOpen = false;
-let faceDetected = false;
-
-// Slingshot game physics
 let ship = { x: W / 2, y: H * 0.72, vx: 0, vy: -5, r: 12, tether: null, angle: 0, dist: 0, dir: 1, spd: 0 };
 let anchors = [];
 let shards = [];
 let camY = 0;
-let shake = 0;
+let isPressing = false;
+let ignoreTouchUntil = 0;
 
-// Camera access
-btnStart.addEventListener('click', async () => {
-  promptEl.style.display = 'none';
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: 'user', width: { ideal: 480 }, height: { ideal: 640 } },
-      audio: false
-    });
-    video.srcObject = stream;
-    await video.play();
-  } catch (err) {
-    console.warn("Front cam unavailable, falling back to touch controls", err);
+// Try starting camera without blocking game execution
+function tryStartCamera() {
+  if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+    navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false })
+      .then(stream => {
+        video.srcObject = stream;
+        video.play().catch(() => {});
+      })
+      .catch(() => {
+        // Camera blocked or unavailable; runs purely on touch controls smoothly
+      });
   }
-  startRun();
-});
-
-// Touch fallback: Tap screen toggles tether if camera tracking is skipped
-canvas.addEventListener('pointerdown', () => {
-  if (state === 'over') { startRun(); return; }
-  mouthOpen = true;
-});
-canvas.addEventListener('pointerup', () => {
-  mouthOpen = false;
-});
+}
 
 function spawn(startY) {
   for (let y = startY; y > startY - 1400; y -= 175) {
@@ -108,12 +99,15 @@ function spawn(startY) {
   }
 }
 
-function startRun() {
+function launchGame() {
+  tryStartCamera();
   score = 0;
   multiplier = 1;
+  hp = 3;
   camY = 0;
   anchors = [];
   shards = [];
+  
   ship.x = W / 2;
   ship.y = H * 0.72;
   ship.vx = 0;
@@ -124,104 +118,126 @@ function startRun() {
   anchors.push({ x: W * 0.65, y: H * 0.3, r: 22, p: 1.5 });
   spawn(H * 0.15);
 
+  overlay.style.display = 'none';
   state = 'playing';
+  ignoreTouchUntil = Date.now() + 300;
 }
 
-function updateGame() {
-  if (state !== 'playing') return;
+// Instant trigger on tap/click without delay
+btnPlay.addEventListener('touchstart', (e) => { e.preventDefault(); e.stopPropagation(); launchGame(); }, { passive: false });
+btnPlay.addEventListener('click', (e) => { e.preventDefault(); launchGame(); });
+overlay.addEventListener('touchstart', (e) => { if (state !== 'playing') launchGame(); });
 
-  // Mouth open engages tether
-  if (mouthOpen && !ship.tether) {
-    let closest = null, minD = 300;
-    for (let a of anchors) {
-      let d = Math.hypot(ship.x - a.x, ship.y - a.y);
-      if (d < minD) { minD = d; closest = a; }
-    }
-    if (closest) {
-      ship.tether = closest;
-      ship.dist = Math.max(minD, 45);
-      ship.angle = Math.atan2(ship.y - closest.y, ship.x - closest.x);
-      let spd = Math.max(Math.hypot(ship.vx, ship.vy), 7);
-      let dot = ship.vx * (-Math.sin(ship.angle)) + ship.vy * (Math.cos(ship.angle));
-      ship.dir = dot >= 0 ? 1 : -1;
-      ship.spd = (spd / ship.dist) * ship.dir;
-    }
+// Slingshot / Tether mechanics
+function handleDown() {
+  if (state !== 'playing' || Date.now() < ignoreTouchUntil) return;
+  isPressing = true;
+  if (ship.tether) return;
+
+  let closest = null, minD = 300;
+  for (let a of anchors) {
+    let d = Math.hypot(ship.x - a.x, ship.y - a.y);
+    if (d < minD) { minD = d; closest = a; }
   }
 
-  // Mouth close launches ship
-  if (!mouthOpen && ship.tether) {
+  if (closest) {
+    ship.tether = closest;
+    ship.dist = Math.max(minD, 45);
+    ship.angle = Math.atan2(ship.y - closest.y, ship.x - closest.x);
+    let spd = Math.hypot(ship.vx, ship.vy);
+    if (spd < 7) spd = 7;
+    let dot = ship.vx * (-Math.sin(ship.angle)) + ship.vy * (Math.cos(ship.angle));
+    ship.dir = dot >= 0 ? 1 : -1;
+    ship.spd = (spd / ship.dist) * ship.dir;
+  }
+}
+
+function handleUp() {
+  if (state !== 'playing') return;
+  isPressing = false;
+  if (ship.tether) {
     let spd = Math.min(Math.max(Math.abs(ship.spd * ship.dist) * 1.15, 8), 18);
     let relAngle = ship.angle + (ship.dir > 0 ? Math.PI / 2 : -Math.PI / 2);
-    ship.vx = Math.cos(relAngle) * spd + (headTilt * 2.5); // head tilt steering
+    ship.vx = Math.cos(relAngle) * spd;
     ship.vy = Math.sin(relAngle) * spd;
     ship.tether = null;
-    shake = 5;
   }
-
-  if (ship.tether) {
-    ship.angle += ship.spd;
-    ship.x = ship.tether.x + Math.cos(ship.angle) * ship.dist;
-    ship.y = ship.tether.y + Math.sin(ship.angle) * ship.dist;
-  } else {
-    ship.x += ship.vx + (headTilt * 1.5);
-    ship.y += ship.vy;
-    ship.vy += 0.08;
-  }
-
-  // Screen bounds
-  if (ship.x < ship.r) { ship.x = ship.r; ship.vx = Math.abs(ship.vx) * 0.7; }
-  if (ship.x > W - ship.r) { ship.x = W - ship.r; ship.vx = -Math.abs(ship.vx) * 0.7; }
-
-  // Upward camera follow
-  let targetY = ship.y - H * 0.65;
-  if (targetY < camY) {
-    score += Math.floor((camY - targetY) * 0.25);
-    camY = targetY;
-  }
-
-  let topA = anchors.reduce((m, a) => a.y < m ? a.y : m, H);
-  if (topA > camY - 450) spawn(topA - 120);
-
-  // Collect shards
-  for (let i = shards.length - 1; i >= 0; i--) {
-    let s = shards[i];
-    s.rot += 0.04;
-    if (Math.hypot(ship.x - s.x, ship.y - s.y) < ship.r + s.r + 14) {
-      score += 150 * multiplier;
-      multiplier = Math.min(8, multiplier + 1);
-      shards.splice(i, 1);
-    }
-  }
-
-  // Crash detection
-  if (ship.y - camY > H + 50) {
-    state = 'over';
-    shake = 12;
-    if (score > best) { best = score; localStorage.setItem('cs_ar_best', best); }
-  }
-
-  anchors = anchors.filter(a => a.y < camY + H + 180);
-  shards = shards.filter(s => s.y < camY + H + 180);
 }
 
-function render() {
-  requestAnimationFrame(render);
-  updateGame();
+window.addEventListener('touchstart', (e) => { if (state === 'playing') handleDown(); }, { passive: true });
+window.addEventListener('touchend', (e) => { if (state === 'playing') handleUp(); }, { passive: true });
+window.addEventListener('mousedown', handleDown);
+window.addEventListener('mouseup', handleUp);
 
-  ctx.save();
-  if (shake > 0) {
-    ctx.translate((Math.random() - 0.5) * shake, (Math.random() - 0.5) * shake);
-    shake *= 0.88;
-    if (shake < 0.2) shake = 0;
+function loop() {
+  requestAnimationFrame(loop);
+
+  if (state === 'playing') {
+    if (ship.tether) {
+      ship.angle += ship.spd;
+      ship.x = ship.tether.x + Math.cos(ship.angle) * ship.dist;
+      ship.y = ship.tether.y + Math.sin(ship.angle) * ship.dist;
+      ship.spd *= 1.002;
+    } else {
+      ship.x += ship.vx;
+      ship.y += ship.vy;
+      ship.vy += 0.08;
+    }
+
+    if (ship.x < ship.r) { ship.x = ship.r; ship.vx = Math.abs(ship.vx) * 0.7; }
+    if (ship.x > W - ship.r) { ship.x = W - ship.r; ship.vx = -Math.abs(ship.vx) * 0.7; }
+
+    let targetY = ship.y - H * 0.65;
+    if (targetY < camY) {
+      score += Math.floor((camY - targetY) * 0.25);
+      camY = targetY;
+    }
+
+    let topA = anchors.reduce((m, a) => a.y < m ? a.y : m, H);
+    if (topA > camY - 500) spawn(topA - 120);
+
+    for (let i = shards.length - 1; i >= 0; i--) {
+      let s = shards[i];
+      s.rot += 0.04;
+      if (Math.hypot(ship.x - s.x, ship.y - s.y) < ship.r + s.r + 14) {
+        score += 150 * multiplier;
+        multiplier = Math.min(8, multiplier + 1);
+        shards.splice(i, 1);
+      }
+    }
+
+    if (ship.y - camY > H + 50) {
+      hp--;
+      if (hp <= 0) {
+        state = 'over';
+        if (score > bestScore) {
+          bestScore = score;
+          localStorage.setItem('cs_ar_best', bestScore);
+        }
+        titleText.innerText = 'DRIFT OVER';
+        subText.innerHTML = `SCORE: <strong style="color:#00ffcc">${score}</strong><br>Tap to try again!`;
+        bestEl.innerText = 'BEST: ' + bestScore;
+        btnPlay.innerText = 'PLAY AGAIN';
+        overlay.style.display = 'flex';
+      } else {
+        ship.y = camY + H * 0.5;
+        ship.vy = -7;
+        ship.vx = 0;
+        ship.tether = null;
+      }
+    }
+
+    anchors = anchors.filter(a => a.y < camY + H + 180);
+    shards = shards.filter(s => s.y < camY + H + 180);
   }
 
+  // Draw
   ctx.clearRect(0, 0, W, H);
 
-  // In-Game World
   ctx.save();
   ctx.translate(0, -camY);
 
-  // Anchors
+  // Rings
   for (let a of anchors) {
     a.p += 0.04;
     let r = a.r + Math.sin(a.p) * 3;
@@ -247,7 +263,7 @@ function render() {
     ctx.restore();
   }
 
-  // Tether
+  // Tether line
   if (ship.tether) {
     ctx.strokeStyle = '#00ffff';
     ctx.lineWidth = 3;
@@ -272,62 +288,18 @@ function render() {
   ctx.fill();
   ctx.restore();
 
-  ctx.restore(); // end camera
+  ctx.restore();
 
-  // HUD
+  // In-Game HUD
   if (state === 'playing') {
     ctx.fillStyle = '#00ffcc';
     ctx.font = 'bold 18px sans-serif';
-    ctx.fillText('SCORE: ' + score + ' (x' + multiplier + ')', 20, 40);
-    ctx.fillStyle = mouthOpen ? '#00ffcc' : '#ffaa00';
-    ctx.font = 'bold 14px sans-serif';
-    ctx.fillText(mouthOpen ? 'TETHER: ACTIVE' : 'OPEN MOUTH TO TETHER', 20, 65);
+    ctx.fillText('SCORE: ' + score + ' (x' + multiplier + ')', 20, 42);
+    ctx.fillStyle = '#ff0077';
+    ctx.fillText('HP: ' + hp, W - 75, 42);
   }
-
-  // CYBERPUNK AR VISOR OVERLAY (Top Face Center)
-  ctx.save();
-  let visorX = W / 2;
-  let visorY = H * 0.22;
-  
-  if (state === 'playing') {
-    // Normal Glowing Cyber Visor
-    ctx.strokeStyle = '#00ffff';
-    ctx.lineWidth = 4;
-    ctx.shadowColor = '#00ffff';
-    ctx.shadowBlur = 15;
-    ctx.beginPath();
-    ctx.roundRect(visorX - 85, visorY - 18, 170, 36, 12);
-    ctx.stroke();
-    ctx.fillStyle = 'rgba(0, 255, 255, 0.2)';
-    ctx.fill();
-  } else if (state === 'over') {
-    // Shattered Visor
-    ctx.strokeStyle = '#ff0055';
-    ctx.lineWidth = 3;
-    ctx.shadowColor = '#ff0055';
-    ctx.shadowBlur = 15;
-    ctx.beginPath();
-    ctx.moveTo(visorX - 80, visorY - 15); ctx.lineTo(visorX - 20, visorY + 12);
-    ctx.lineTo(visorX + 15, visorY - 14); ctx.lineTo(visorX + 80, visorY + 10);
-    ctx.stroke();
-
-    // FOREHEAD VIRAL CHALLENGE STAMP
-    ctx.fillStyle = 'rgba(5, 5, 12, 0.88)';
-    ctx.fillRect(0, 0, W, H);
-
-    ctx.textAlign = 'center';
-    ctx.fillStyle = '#ff0055';
-    ctx.font = 'bold 32px sans-serif';
-    ctx.fillText('SHATTERED!', W / 2, H * 0.35);
-
-    // Neon Forehead Badge
-    ctx.fillStyle = '#ffcc00';
-    ctx.font = 'bold 22px sans-serif';
-    ctx.fillText('SCORE: ' + score, W / 2, H * 0.43);
-    
-    ctx.fillStyle = '#00ffcc';
-    ctx.font = 'bold 18px sans-serif';
-    ctx.fillText('BEAT MY SCORE!', W / 2, H * 0.48);
-
-    // Play
- 
+}
+loop();
+</script>
+</body>
+</html>
